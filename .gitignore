@@ -1,0 +1,26 @@
+# Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+coverage/
+pubspec.lock
+.pub/
+.pub-cache/
+
+# IDE
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.*
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

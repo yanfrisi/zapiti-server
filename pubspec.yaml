@@ -1,0 +1,17 @@
+name: zapiti_server
+description: Multiplayer WebSocket server for Zapiti card game
+version: 0.1.0
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+  shelf: ^1.4.1
+  shelf_web_socket: ^3.0.0
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^3.0.0
+
+bin:
+  zapiti_server: bin/zapiti_server.dart
