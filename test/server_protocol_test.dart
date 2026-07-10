@@ -95,6 +95,23 @@ void main() {
       expect(json['seats'][1]['ready'], true);
     });
 
+    test('serialize choose_al_ver_decision message', () {
+      final message = MultiplayerMessage(
+        type: MultiplayerMessageType.chooseAlVerDecision,
+        roomId: 'A7K2',
+        playerId: 'p1',
+        payload: {'play': true},
+      );
+
+      final json = message.toJson();
+      expect(json['type'], 'choose_al_ver_decision');
+      expect(json['payload']['play'], true);
+
+      final decoded = MultiplayerMessage.fromJson(json);
+      expect(decoded.type, MultiplayerMessageType.chooseAlVerDecision);
+      expect(decoded.payload!['play'], true);
+    });
+
     test('deserialize room_snapshot', () {
       final json = {
         'roomId': 'A7K2',

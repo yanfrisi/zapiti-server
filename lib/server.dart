@@ -92,6 +92,9 @@ class ZapitiServer {
         case MultiplayerMessageType.restartGame:
           _handleRestartGame(connection, message);
           break;
+        case MultiplayerMessageType.chooseAlVerDecision:
+          _handleGameMessage(connection, message);
+          break;
         case MultiplayerMessageType.playCard:
         case MultiplayerMessageType.callTruco:
         case MultiplayerMessageType.acceptTruco:
@@ -537,6 +540,9 @@ class ZapitiServer {
       case MultiplayerMessageType.playCard:
         _handlePlayCard(connection, room, match, message);
         break;
+      case MultiplayerMessageType.chooseAlVerDecision:
+        _handleChooseAlVerDecision(connection, room, match, message);
+        break;
       case MultiplayerMessageType.callTruco:
         _handleCallTruco(connection, room, match, message);
         break;
@@ -822,6 +828,39 @@ class ZapitiServer {
     );
   }
 
+  void _handleChooseAlVerDecision(
+    ClientConnection connection,
+    Room room,
+    MatchState match,
+    MultiplayerMessage message,
+  ) {
+    final playerId = message.playerId;
+    final play = message.payload?['play'];
+    if (play is! bool) {
+      connection.sendError('invalid_payload', 'Missing al ver decision');
+      return;
+    }
+
+    final player = match.playerById(playerId!);
+    try {
+      match.chooseAlVerDecision(teamId: player.teamId, play: play);
+    } catch (e) {
+      connection.sendError('invalid_move', 'Cannot choose al ver: $e');
+      return;
+    }
+
+    _broadcastToRoom(
+      room.roomId,
+      MultiplayerMessage(
+        type: MultiplayerMessageType.chooseAlVerDecision,
+        roomId: room.roomId,
+        playerId: playerId,
+        payload: {'play': play},
+      ),
+      excludeConnection: connection.connectionId,
+    );
+  }
+
   void _advanceMatchIfNeeded(Room room, {String? excludeConnection}) {
     final match = room.match;
     if (match == null) return;
@@ -829,6 +868,12 @@ class ZapitiServer {
     var guard = 0;
     while (!match.isGameFinished && guard < 32) {
       guard += 1;
+
+      match.maybeAutoPlayBots();
+
+      if (match.handFinished) {
+        break;
+      }
 
       if (match.hasPendingTruco) {
         final responseTeamId = match.trucoResponseTeamId;
@@ -893,6 +938,10 @@ class ZapitiServer {
       if (room != null) {
         room.clearMatch();
         room.setPhase('lobby');
+        // Resetear estado listo para todos los jugadores que quedan
+        for (final seat in room.seats) {
+          room.setPlayerReady(seat.playerId, false);
+        }
         _broadcastRoomSnapshot(roomId);
       }
     }

@@ -14,6 +14,7 @@ enum MultiplayerMessageType {
   startGame('start_game'),
   newHand('new_hand'),
   restartGame('restart_game'),
+  chooseAlVerDecision('choose_al_ver_decision'),
   playCard('play_card'),
   callTruco('call_truco'),
   acceptTruco('accept_truco'),

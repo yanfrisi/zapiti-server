@@ -305,6 +305,13 @@ class TrucoRules {
   }
 }
 
+enum AlVerState {
+  none,
+  awaitingDecision,
+  playing,
+  conceded,
+}
+
 class MatchState {
   static const defaultTargetScore = 30;
 
@@ -320,6 +327,7 @@ class MatchState {
   final List<RoundResult> roundHistory = [];
   final Map<int, int> score = {1: 0, 2: 0};
   final Map<int, int> roundWins = {1: 0, 2: 0};
+  final Set<int> alVerTeamIds = {};
 
   int turnIndex = 0;
   int leadIndex = 0;
@@ -329,6 +337,7 @@ class MatchState {
   int? trucoCallerTeamId;
   int? lastTrucoRaiserTeamId;
   int? winningTeamId;
+  AlVerState alVerState = AlVerState.none;
   bool handFinished = false;
   bool isRoundAwaitingContinue = false;
   bool isTrucoAccepted = false;
@@ -394,6 +403,8 @@ class MatchState {
 
   bool get isBotTurn => currentPlayer.isBot;
   bool get hasPendingTruco => pendingTrucoValue != null;
+  int? get alVerTeamId =>
+      alVerTeamIds.length == 1 ? alVerTeamIds.first : null;
   int get trucoResponseTeamId {
     final callerTeamId = trucoCallerTeamId;
     if (callerTeamId == null) {
@@ -459,6 +470,12 @@ class MatchState {
     if (value > maxAllowedTrucoValue) {
       throw ArgumentError('Truco value too high.');
     }
+    if (alVerState == AlVerState.awaitingDecision) {
+      throw StateError('Al ver pending.');
+    }
+    if (alVerState != AlVerState.none && alVerTeamIds.contains(player.teamId)) {
+      throw StateError('Team al ver cannot call truco.');
+    }
     pendingTrucoValue = value;
     trucoCallerTeamId = player.teamId;
     lastTrucoRaiserTeamId = player.teamId;
@@ -472,6 +489,9 @@ class MatchState {
     if (acceptedValue == null) {
       throw StateError('No truco pending.');
     }
+    if (alVerState == AlVerState.awaitingDecision) {
+      throw StateError('Al ver pending.');
+    }
     handValue = acceptedValue;
     pendingTrucoValue = null;
     trucoCallerTeamId = null;
@@ -484,6 +504,13 @@ class MatchState {
     if (pending == null) {
       throw StateError('No truco pending.');
     }
+    if (alVerState == AlVerState.awaitingDecision) {
+      throw StateError('Al ver pending.');
+    }
+    final player = playerById(playerId);
+    if (alVerState != AlVerState.none && alVerTeamIds.contains(player.teamId)) {
+      throw StateError('Team al ver cannot raise truco.');
+    }
     if (value <= pending) {
       throw ArgumentError('Raise must be higher.');
     }
@@ -495,6 +522,9 @@ class MatchState {
     final callerTeamId = trucoCallerTeamId;
     if (callerTeamId == null || pendingTrucoValue == null) {
       throw StateError('No truco pending.');
+    }
+    if (alVerState == AlVerState.awaitingDecision) {
+      throw StateError('Al ver pending.');
     }
     if (passingTeamId == callerTeamId) {
       throw ArgumentError('Caller team cannot pass itself.');
@@ -533,10 +563,14 @@ class MatchState {
     leadIndex = nextLeadIndex;
     nextLeadIndex = (nextLeadIndex + 1) % players.length;
     turnIndex = leadIndex;
+    _refreshAlVerState();
     phase = 'playing';
     status = currentPlayerId == humanPlayerIds.first
         ? 'Sales tu.'
         : 'Sale ${currentPlayer.name}.';
+    if (alVerState == AlVerState.awaitingDecision) {
+      status = '$status Equipo al ver pendiente.';
+    }
   }
 
   void restartGame({Map<String, List<SpanishCard>>? fixedHands}) {
@@ -554,6 +588,14 @@ class MatchState {
   }
 
   void maybeAutoPlayBots() {
+    if (alVerState == AlVerState.awaitingDecision) {
+      final teamId = alVerTeamId;
+      if (teamId != null && _teamHasOnlyBots(teamId)) {
+        chooseAlVerDecision(teamId: teamId, play: _shouldBotPlayAlVer(teamId));
+      }
+      return;
+    }
+
     while (!handFinished &&
         !isRoundAwaitingContinue &&
         !isGameFinished &&
@@ -597,6 +639,31 @@ class MatchState {
     return winningCards.isNotEmpty ? winningCards.first : sorted.first;
   }
 
+  void chooseAlVerDecision({required int teamId, required bool play}) {
+    if (alVerState != AlVerState.awaitingDecision) {
+      throw StateError('No al ver decision pending.');
+    }
+    if (!alVerTeamIds.contains(teamId)) {
+      throw ArgumentError('Team $teamId is not al ver.');
+    }
+    if (alVerTeamIds.length != 1) {
+      throw StateError('Both-team al ver is not supported yet.');
+    }
+
+    if (play) {
+      alVerState = AlVerState.playing;
+      status = 'Equipo $teamId decide jugar al ver. La mano continua.';
+      return;
+    }
+
+    final rivalTeamId = teamId == 1 ? 2 : 1;
+    alVerState = AlVerState.conceded;
+    _finishHandForTeam(
+      rivalTeamId,
+      points: 2,
+    );
+  }
+
   Map<String, dynamic> toPublicJson() => {
         'roomId': roomId,
         'phase': phase,
@@ -630,6 +697,9 @@ class MatchState {
         'handFinished': handFinished,
         'isRoundAwaitingContinue': isRoundAwaitingContinue,
         'winningTeamId': winningTeamId,
+        'alVerState': alVerState.name,
+        'alVerTeamId': alVerTeamId,
+        'alVerTeamIds': alVerTeamIds.toList(),
         'status': status,
       };
 
@@ -720,5 +790,50 @@ class MatchState {
     return {
       for (final entry in source.entries) entry.key: [...entry.value],
     };
+  }
+
+  void _refreshAlVerState() {
+    alVerTeamIds.clear();
+    if (score[1] == 29) {
+      alVerTeamIds.add(1);
+    }
+    if (score[2] == 29) {
+      alVerTeamIds.add(2);
+    }
+    alVerState = alVerTeamIds.isEmpty
+        ? AlVerState.none
+        : AlVerState.awaitingDecision;
+  }
+
+  bool _shouldBotPlayAlVer(int teamId) {
+    final cards = hands[players
+        .firstWhere((player) => player.teamId == teamId)
+        .playerId];
+    if (cards == null || cards.isEmpty) return false;
+
+    final strengths = cards.map(ZapitiRules.strength).toList()..sort();
+    final strongest = strengths.last;
+    final second = strengths.length > 1 ? strengths[strengths.length - 2] : 0;
+    final third = strengths.length > 2 ? strengths[strengths.length - 3] : 0;
+    final handScore = strongest + (second ~/ 2) + (third ~/ 3);
+    final opponentTeamId = teamId == 1 ? 2 : 1;
+    final scoreGap = score[teamId]! - score[opponentTeamId]!;
+
+    var threshold = 104;
+    if (scoreGap < 0) {
+      threshold -= 10;
+    } else if (scoreGap >= 6) {
+      threshold += 8;
+    }
+    if (score[opponentTeamId]! >= targetScore - 2) {
+      threshold -= 12;
+    }
+    if (score[teamId]! >= targetScore - 1) {
+      threshold += 6;
+    }
+    if (strongest >= 97) {
+      threshold -= 6;
+    }
+    return handScore >= threshold;
   }
 }
