@@ -17,6 +17,7 @@ class ZapitiServer {
   late String host;
   final RoomManager roomManager = RoomManager();
   final RankingStore rankingStore;
+  static const int _multiplayerBotDifficulty = 4;
 
   // Map de connectionId -> ClientConnection
   final Map<String, ClientConnection> _connections = {};
@@ -1139,13 +1140,8 @@ class ZapitiServer {
       name: 'Bot ${seatIndex + 1}',
       teamId: teamId,
       characterId: defaultCharacterIds[seatIndex % defaultCharacterIds.length],
-      aiDifficulty: _botDifficultyForSeat(seatIndex),
+      aiDifficulty: _multiplayerBotDifficulty,
     );
-  }
-
-  int _botDifficultyForSeat(int seatIndex) {
-    const difficultiesBySeat = [2, 3, 4, 5];
-    return difficultiesBySeat[seatIndex.clamp(0, difficultiesBySeat.length - 1)];
   }
 
   void _handlePlayCard(
