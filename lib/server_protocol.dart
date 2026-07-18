@@ -10,6 +10,8 @@ enum MultiplayerMessageType {
   roomSnapshot('room_snapshot'),
   playerReady('player_ready'),
   selectCharacter('select_character'),
+  getRanking('get_ranking'),
+  ranking('ranking'),
   requestSignal('request_signal'),
   startGame('start_game'),
   newHand('new_hand'),

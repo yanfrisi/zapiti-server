@@ -122,6 +122,7 @@ class MatchPlayer {
   final int teamId;
   final String? connectionId;
   final String characterId;
+  final int aiDifficulty;
 
   const MatchPlayer({
     required this.playerId,
@@ -129,6 +130,7 @@ class MatchPlayer {
     required this.teamId,
     this.connectionId,
     required this.characterId,
+    this.aiDifficulty = 3,
   });
 
   bool get isBot => connectionId == null;
@@ -138,7 +140,26 @@ class MatchPlayer {
         'name': name,
         'teamId': teamId,
         'characterId': characterId,
+        if (isBot) 'aiDifficulty': aiDifficulty,
       };
+}
+
+enum BotTrucoAction {
+  accept,
+  pass,
+  raise,
+}
+
+class BotTrucoDecision {
+  final BotTrucoAction action;
+  final MatchPlayer player;
+  final int? value;
+
+  const BotTrucoDecision({
+    required this.action,
+    required this.player,
+    this.value,
+  });
 }
 
 class PlayedCard {
@@ -276,6 +297,9 @@ class HandRules {
 class TrucoRules {
   const TrucoRules._();
 
+  static const int firstTrucoValue = 3;
+  static const int raiseStep = 3;
+
   static int maxAllowedValue({
     required int scoreTeamOne,
     required int scoreTeamTwo,
@@ -286,18 +310,19 @@ class TrucoRules {
     final maxForTeamTwo = targetScore - 1 - scoreTeamTwo;
     final maxValue =
         maxForTeamOne < maxForTeamTwo ? maxForTeamOne : maxForTeamTwo;
-    return maxValue < currentAcceptedValue ? currentAcceptedValue : maxValue;
+    final minimumValue = currentAcceptedValue < firstTrucoValue
+        ? firstTrucoValue
+        : currentAcceptedValue;
+    return maxValue < minimumValue ? minimumValue : maxValue;
   }
 
   static List<int> raiseOptions({
     required int pendingValue,
     required int maxAllowedValue,
   }) {
-    final firstRaise = pendingValue + 1;
+    final firstRaise = pendingValue + raiseStep;
     if (firstRaise > maxAllowedValue) return const [];
-    return [
-      for (var value = firstRaise; value <= maxAllowedValue; value++) value
-    ];
+    return [firstRaise];
   }
 
   static int passPoints({required int currentAcceptedValue}) {
@@ -619,6 +644,89 @@ class MatchState {
 
   bool teamHasOnlyBots(int teamId) => _teamHasOnlyBots(teamId);
 
+  MatchPlayer botResponderForTeam(int teamId) {
+    return players.firstWhere(
+      (player) => player.teamId == teamId && player.isBot,
+    );
+  }
+
+  bool shouldBotPlayAlVer(int teamId) => _shouldBotPlayAlVer(teamId);
+
+  bool shouldBotCallTruco(MatchPlayer bot) {
+    if (!bot.isBot ||
+        pendingTrucoValue != null ||
+        isTrucoAccepted ||
+        handFinished ||
+        isRoundAwaitingContinue ||
+        alVerState == AlVerState.awaitingDecision ||
+        roundHistory.length >= 2 ||
+        maxAllowedTrucoValue < TrucoRules.firstTrucoValue) {
+      return false;
+    }
+    if (alVerState != AlVerState.none && alVerTeamIds.contains(bot.teamId)) {
+      return false;
+    }
+
+    final teamScore = _teamHandScore(bot.teamId);
+    final handStrength = _normalizedHandStrength(bot.teamId);
+    final ownMaxStrength = _handMaxStrength(bot.playerId);
+    final opponentTeamId = _opponentOf(bot.teamId);
+    final canCloseHand = roundWins[bot.teamId]! > 0;
+    final mustSaveHand = roundWins[opponentTeamId]! > 0;
+    final needsPoints = score[bot.teamId]! < score[opponentTeamId]!;
+    final profile = _BotDifficultyProfile.byLevel(bot.aiDifficulty);
+
+    if (handStrength < 0.40) return false;
+    if (mustSaveHand && handStrength < 0.65) return false;
+    if (playedCards.isEmpty && !canCloseHand) {
+      if (handStrength < 0.80 || teamScore < profile.threshold(165)) {
+        return false;
+      }
+    } else if (canCloseHand) {
+      if (teamScore < profile.threshold(94)) return false;
+    } else if (needsPoints) {
+      if (teamScore < profile.threshold(132)) return false;
+    } else if (teamScore < profile.threshold(145)) {
+      return false;
+    }
+
+    var chance = switch (profile.level) {
+      <= 2 => handStrength >= 0.80 ? 0.16 : 0.07,
+      3 => handStrength >= 0.80 ? 0.24 : 0.12,
+      _ => handStrength >= 0.80 ? 0.34 : 0.18,
+    };
+    if (playedCards.isNotEmpty) chance += 0.03;
+    if (canCloseHand) chance += 0.04;
+    if (needsPoints) chance += 0.02;
+    if (ownMaxStrength >= 97) chance += 0.02;
+
+    return _decisionRandom('call_truco', bot).nextDouble() <
+        chance.clamp(0, 0.48);
+  }
+
+  BotTrucoDecision chooseBotTrucoDecision(int teamId) {
+    final responder = botResponderForTeam(teamId);
+    final pendingValue = pendingTrucoValue;
+    if (pendingValue == null) {
+      throw StateError('No truco pending.');
+    }
+
+    final raiseValue = _chooseBotRaiseValue(responder, pendingValue);
+    if (raiseValue != null) {
+      return BotTrucoDecision(
+        action: BotTrucoAction.raise,
+        player: responder,
+        value: raiseValue,
+      );
+    }
+
+    final accepts = _shouldBotAcceptTruco(responder, pendingValue);
+    return BotTrucoDecision(
+      action: accepts ? BotTrucoAction.accept : BotTrucoAction.pass,
+      player: responder,
+    );
+  }
+
   SpanishCard chooseBotCard(MatchPlayer bot) {
     final hand = hands[bot.playerId];
     if (hand == null || hand.isEmpty) {
@@ -776,6 +884,143 @@ class MatchState {
     return ZapitiRules.strength(a).compareTo(ZapitiRules.strength(b));
   }
 
+  int _teamHandScore(int teamId) {
+    final strengths = players
+        .where((player) => player.teamId == teamId)
+        .expand((player) => hands[player.playerId] ?? const <SpanishCard>[])
+        .map(ZapitiRules.strength)
+        .toList()
+      ..sort();
+    if (strengths.isEmpty) return 0;
+    final strongest = strengths.last;
+    final second =
+        strengths.length > 1 ? strengths[strengths.length - 2] ~/ 2 : 0;
+    final third =
+        strengths.length > 2 ? strengths[strengths.length - 3] ~/ 3 : 0;
+    return strongest + second + third;
+  }
+
+  double _normalizedHandStrength(int teamId) {
+    final strengths = players
+        .where((player) => player.teamId == teamId)
+        .expand((player) => hands[player.playerId] ?? const <SpanishCard>[])
+        .map(ZapitiRules.strength)
+        .toList()
+      ..sort();
+    if (strengths.isEmpty) return 0;
+    final strongest = strengths.last / 100;
+    final second =
+        strengths.length > 1 ? strengths[strengths.length - 2] / 100 : 0;
+    final third =
+        strengths.length > 2 ? strengths[strengths.length - 3] / 100 : 0;
+    return (strongest * 0.55 + second * 0.30 + third * 0.15).clamp(0, 1);
+  }
+
+  int _handMaxStrength(String playerId) {
+    final playerHand = hands[playerId] ?? const <SpanishCard>[];
+    if (playerHand.isEmpty) return 0;
+    return playerHand
+        .map(ZapitiRules.strength)
+        .reduce((best, current) => current > best ? current : best);
+  }
+
+  int? _chooseBotRaiseValue(MatchPlayer responder, int pendingValue) {
+    if (pendingValue >= maxAllowedTrucoValue || pendingValue >= 9) return null;
+
+    final profile = _BotDifficultyProfile.byLevel(responder.aiDifficulty);
+    final teamId = responder.teamId;
+    final teamScore = _teamHandScore(teamId);
+    final strengths = players
+        .where((player) => player.teamId == teamId)
+        .expand((player) => hands[player.playerId] ?? const <SpanishCard>[])
+        .map(ZapitiRules.strength)
+        .toList()
+      ..sort();
+    if (strengths.isEmpty) return null;
+
+    final strongest = strengths.last;
+    final goodCards = strengths.where((strength) => strength >= 80).length;
+    final isWinningReparto = roundWins[teamId]! > roundWins[_opponentOf(teamId)]!;
+    if (strongest < 90 && goodCards < 2) return null;
+    if (!isWinningReparto && pendingValue >= 6 && goodCards < 2) return null;
+    if (teamScore < profile.threshold(pendingValue >= 6 ? 128 : 145)) {
+      return null;
+    }
+
+    var chance = switch (profile.level) {
+      <= 2 => 0.06,
+      3 => 0.12,
+      _ => 0.20,
+    };
+    if (strongest >= 97) chance += 0.06;
+    if (goodCards >= 2) chance += 0.05;
+    if (isWinningReparto) chance += 0.03;
+    if (pendingValue >= 6) chance *= 0.5;
+
+    if (_decisionRandom('raise_truco', responder).nextDouble() >=
+        chance.clamp(0, 0.32)) {
+      return null;
+    }
+
+    final nextValue = pendingValue + TrucoRules.raiseStep;
+    return nextValue <= maxAllowedTrucoValue ? nextValue : null;
+  }
+
+  bool _shouldBotAcceptTruco(MatchPlayer responder, int pendingValue) {
+    if (pendingValue > maxAllowedTrucoValue) return false;
+
+    final teamId = responder.teamId;
+    final opponentTeamId = _opponentOf(teamId);
+    final profile = _BotDifficultyProfile.byLevel(responder.aiDifficulty);
+    final teamScore = _teamHandScore(teamId);
+    final handStrength = _normalizedHandStrength(teamId);
+    final strongest = players
+        .where((player) => player.teamId == teamId)
+        .map((player) => _handMaxStrength(player.playerId))
+        .fold(0, (best, current) => current > best ? current : best);
+
+    var threshold = switch (pendingValue) {
+      <= 3 => 100,
+      <= 6 => 122,
+      <= 9 => 144,
+      _ => 162,
+    };
+    threshold = profile.threshold(threshold);
+    if (roundWins[teamId]! > roundWins[opponentTeamId]!) threshold -= 14;
+    if (roundWins[opponentTeamId]! > roundWins[teamId]!) threshold += 8;
+    if (score[teamId]! < score[opponentTeamId]!) threshold -= 6;
+    if (score[opponentTeamId]! >= targetScore - 3) threshold -= 8;
+    if (strongest >= 97) threshold -= 8;
+    if (handStrength < 0.35 && pendingValue >= 6) threshold += 10;
+
+    final acceptsByStrength = teamScore >= threshold;
+    if (acceptsByStrength) return true;
+
+    final impulseChance = switch (profile.level) {
+      1 => 0.16,
+      2 => 0.08,
+      3 => 0.025,
+      _ => 0.0,
+    };
+    return _decisionRandom('accept_truco', responder).nextDouble() <
+        impulseChance;
+  }
+
+  Random _decisionRandom(String salt, MatchPlayer player) {
+    var value = seed ^
+        handSeed ^
+        (handSequence * 1009) ^
+        (playedCards.length * 37) ^
+        (roundHistory.length * 101) ^
+        ((pendingTrucoValue ?? 0) * 211);
+    for (final unit in '$salt:${player.playerId}'.codeUnits) {
+      value = (value * 31 + unit) & 0x7fffffff;
+    }
+    return Random(value);
+  }
+
+  int _opponentOf(int teamId) => teamId == 1 ? 2 : 1;
+
   Map<String, List<SpanishCard>> _dealRandomHands() {
     final deck = ZapitiDeck.shuffled(random: Random(handSeed));
     return {
@@ -835,5 +1080,27 @@ class MatchState {
       threshold -= 6;
     }
     return handScore >= threshold;
+  }
+}
+
+class _BotDifficultyProfile {
+  final int level;
+  final int callThresholdModifier;
+
+  const _BotDifficultyProfile({
+    required this.level,
+    required this.callThresholdModifier,
+  });
+
+  int threshold(int base) => base + callThresholdModifier;
+
+  static _BotDifficultyProfile byLevel(int level) {
+    return switch (level.clamp(1, 5)) {
+      1 => const _BotDifficultyProfile(level: 1, callThresholdModifier: -8),
+      2 => const _BotDifficultyProfile(level: 2, callThresholdModifier: -4),
+      3 => const _BotDifficultyProfile(level: 3, callThresholdModifier: -2),
+      4 => const _BotDifficultyProfile(level: 4, callThresholdModifier: 8),
+      _ => const _BotDifficultyProfile(level: 5, callThresholdModifier: 10),
+    };
   }
 }

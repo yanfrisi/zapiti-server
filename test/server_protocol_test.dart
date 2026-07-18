@@ -163,6 +163,21 @@ void main() {
       expect(decoded.type, MultiplayerMessageType.requestSignal);
       expect(decoded.payload!['requesterName'], 'Juan');
     });
+
+    test('encode and decode ranking message', () {
+      final message = MultiplayerMessage(
+        type: MultiplayerMessageType.ranking,
+        payload: {
+          'pairs': [
+            {'teamName': 'Juan / Ana', 'played': 2, 'wins': 1},
+          ],
+        },
+      );
+
+      final decoded = MultiplayerMessage.decode(message.encode());
+      expect(decoded.type, MultiplayerMessageType.ranking);
+      expect(decoded.payload!['pairs'], isA<List<dynamic>>());
+    });
   });
 
   group('MultiplayerSeat', () {

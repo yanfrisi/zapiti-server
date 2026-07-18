@@ -4,6 +4,7 @@ import 'match_state.dart';
 /// Representa una sala de juego
 class Room {
   static const maxSeats = 4;
+  static const maxPlayerNameLength = 18;
 
   final String roomId;
   final int createdAt;
@@ -44,6 +45,9 @@ class Room {
     if (_seats.length >= maxSeats) {
       throw StateError('Room is full');
     }
+    if (containsPlayer(playerId)) {
+      throw StateError('Player already in room');
+    }
 
     final seatIndex = getAvailableSeat();
     if (seatIndex < 0) {
@@ -54,9 +58,14 @@ class Room {
       preferredCharacterId: characterId,
     );
 
+    final cleanName = sanitizePlayerName(name);
+    if (cleanName == null) {
+      throw StateError('Invalid player name');
+    }
+
     final seat = MultiplayerSeat(
       playerId: playerId,
-      name: name,
+      name: cleanName,
       seatIndex: seatIndex,
       teamId: seatIndex.isEven ? 1 : 2,
       ready: false,
@@ -176,5 +185,13 @@ class Room {
     }
 
     throw StateError('No available characters');
+  }
+
+  static String? sanitizePlayerName(Object? rawName) {
+    if (rawName is! String) return null;
+    final normalized = rawName.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (normalized.isEmpty) return null;
+    if (normalized.length <= maxPlayerNameLength) return normalized;
+    return normalized.substring(0, maxPlayerNameLength).trimRight();
   }
 }

@@ -29,6 +29,23 @@ void main() {
       expect(room2.seats[1].seatIndex, 1);
     });
 
+    test('normalizes player names', () {
+      final room = manager.createRoom(
+        '  Juan   Fran con nombre largo  ',
+        'p1',
+        'conn1',
+      );
+
+      expect(room.seats[0].name, 'Juan Fran con nomb');
+    });
+
+    test('rejects blank player names', () {
+      expect(
+        () => manager.createRoom('   ', 'p1', 'conn1'),
+        throwsStateError,
+      );
+    });
+
     test('reject join on non-existent room', () {
       final result = manager.joinRoom('FAKE', 'Ana', 'p2', 'conn2');
       expect(result, isNull);

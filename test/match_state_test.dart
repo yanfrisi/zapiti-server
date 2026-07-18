@@ -52,6 +52,30 @@ void main() {
       );
     });
   });
+
+  group('MatchState bot truco', () {
+    test('equipo bot flojo pasa una subida cara', () {
+      final match = _makeMatch();
+      match.startNewHand(fixedHands: _weakBotHands());
+      match.callTruco('p1', value: 9);
+
+      final decision = match.chooseBotTrucoDecision(2);
+
+      expect(decision.action, BotTrucoAction.pass);
+      expect(decision.player.teamId, 2);
+    });
+
+    test('equipo bot fuerte responde el truco', () {
+      final match = _makeMatch();
+      match.startNewHand(fixedHands: _strongBotHands());
+      match.callTruco('p1', value: 9);
+
+      final decision = match.chooseBotTrucoDecision(2);
+
+      expect(decision.action, isNot(BotTrucoAction.pass));
+      expect(decision.player.teamId, 2);
+    });
+  });
 }
 
 MatchState _makeMatch() {
@@ -111,6 +135,56 @@ Map<String, List<SpanishCard>> _fixedHands() {
       SpanishCard(value: 4, suit: Suit.espadas),
       SpanishCard(value: 5, suit: Suit.espadas),
       SpanishCard(value: 6, suit: Suit.espadas),
+    ],
+  };
+}
+
+Map<String, List<SpanishCard>> _weakBotHands() {
+  return {
+    'p1': const [
+      SpanishCard(value: 4, suit: Suit.bastos),
+      SpanishCard(value: 7, suit: Suit.copas),
+      SpanishCard(value: 3, suit: Suit.oros),
+    ],
+    'p2': const [
+      SpanishCard(value: 4, suit: Suit.espadas),
+      SpanishCard(value: 5, suit: Suit.oros),
+      SpanishCard(value: 6, suit: Suit.oros),
+    ],
+    'p3': const [
+      SpanishCard(value: 7, suit: Suit.oros),
+      SpanishCard(value: 1, suit: Suit.espadas),
+      SpanishCard(value: 2, suit: Suit.bastos),
+    ],
+    'p4': const [
+      SpanishCard(value: 4, suit: Suit.copas),
+      SpanishCard(value: 5, suit: Suit.copas),
+      SpanishCard(value: 6, suit: Suit.copas),
+    ],
+  };
+}
+
+Map<String, List<SpanishCard>> _strongBotHands() {
+  return {
+    'p1': const [
+      SpanishCard(value: 4, suit: Suit.espadas),
+      SpanishCard(value: 5, suit: Suit.oros),
+      SpanishCard(value: 6, suit: Suit.oros),
+    ],
+    'p2': const [
+      SpanishCard(value: 4, suit: Suit.bastos),
+      SpanishCard(value: 7, suit: Suit.copas),
+      SpanishCard(value: 7, suit: Suit.oros),
+    ],
+    'p3': const [
+      SpanishCard(value: 4, suit: Suit.copas),
+      SpanishCard(value: 5, suit: Suit.copas),
+      SpanishCard(value: 6, suit: Suit.copas),
+    ],
+    'p4': const [
+      SpanishCard(value: 1, suit: Suit.espadas),
+      SpanishCard(value: 3, suit: Suit.bastos),
+      SpanishCard(value: 2, suit: Suit.oros),
     ],
   };
 }

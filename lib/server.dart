@@ -7,6 +7,7 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'client_connection.dart';
 import 'match_state.dart';
+import 'ranking_store.dart';
 import 'room.dart';
 import 'room_manager.dart';
 import 'server_protocol.dart';
@@ -15,16 +16,19 @@ class ZapitiServer {
   late int port;
   late String host;
   final RoomManager roomManager = RoomManager();
+  final RankingStore rankingStore;
 
   // Map de connectionId -> ClientConnection
   final Map<String, ClientConnection> _connections = {};
+  final Set<String> _recordedMatchIds = {};
 
   int _connectionCounter = 0;
 
   ZapitiServer({
     String? customHost,
     int? customPort,
-  }) {
+    RankingStore? customRankingStore,
+  }) : rankingStore = customRankingStore ?? RankingStore() {
     // Leer puerto de variable de entorno o usar default
     port = customPort ??
         int.tryParse(Platform.environment['PORT'] ?? '8080') ??
@@ -35,6 +39,14 @@ class ZapitiServer {
   /// Obtener un ID único para conexión
   String _getConnectionId() {
     return 'conn_${DateTime.now().millisecondsSinceEpoch}_${_connectionCounter++}';
+  }
+
+  String? _sanitizePlayerId(String? rawPlayerId) {
+    if (rawPlayerId == null) return null;
+    final trimmed = rawPlayerId.trim();
+    if (trimmed.isEmpty || trimmed.length > 80) return null;
+    if (!RegExp(r'^[A-Za-z0-9_\-]+$').hasMatch(trimmed)) return null;
+    return trimmed;
   }
 
   /// Crear handler de WebSocket
@@ -86,6 +98,9 @@ class ZapitiServer {
         case MultiplayerMessageType.selectCharacter:
           _handleSelectCharacter(connection, message);
           break;
+        case MultiplayerMessageType.getRanking:
+          _handleGetRanking(connection);
+          break;
         case MultiplayerMessageType.newHand:
           _handleNewHand(connection, message);
           break;
@@ -122,15 +137,15 @@ class ZapitiServer {
       return;
     }
 
-    final playerName = payload['name'] as String?;
-    if (playerName == null || playerName.isEmpty) {
+    final playerName = Room.sanitizePlayerName(payload['name']);
+    if (playerName == null) {
       connection.sendError('invalid_payload', 'Missing player name');
       return;
     }
 
     final preferredCharacterId = payload['characterId'] as String?;
 
-    final playerId =
+    final playerId = _sanitizePlayerId(message.playerId) ??
         'player_${DateTime.now().millisecondsSinceEpoch}_${_connections.length}';
 
     Room? room;
@@ -175,20 +190,22 @@ class ZapitiServer {
       return;
     }
 
-    final playerName = payload['name'] as String?;
-    if (playerName == null || playerName.isEmpty) {
+    final playerName = Room.sanitizePlayerName(payload['name']);
+    if (playerName == null) {
       connection.sendError('invalid_payload', 'Missing player name');
       return;
     }
 
     final preferredCharacterId = payload['characterId'] as String?;
+    final requestedPlayerId = _sanitizePlayerId(message.playerId) ??
+        'player_${DateTime.now().millisecondsSinceEpoch}_${_connections.length}';
 
     Room? room;
     try {
       room = roomManager.joinRoom(
         roomId,
         playerName,
-        'player_${DateTime.now().millisecondsSinceEpoch}_${_connections.length}',
+        requestedPlayerId,
         connection.connectionId,
       );
 
@@ -209,7 +226,7 @@ class ZapitiServer {
       _broadcastRoomSnapshot(roomId);
     } catch (e) {
       if (room != null) {
-        roomManager.leaveRoom(roomId, room.seats.last.playerId);
+        roomManager.leaveRoom(roomId, requestedPlayerId);
       }
       if (e is StateError && e.message.contains('full')) {
         connection.sendError('room_full', 'Room is full');
@@ -224,6 +241,13 @@ class ZapitiServer {
         connection.sendError('internal_error', 'Failed to join room: $e');
       }
     }
+  }
+
+  void _handleGetRanking(ClientConnection connection) {
+    connection.send(MultiplayerMessage(
+      type: MultiplayerMessageType.ranking,
+      payload: rankingStore.snapshot(),
+    ));
   }
 
   /// Abandonar sala
@@ -568,6 +592,7 @@ class ZapitiServer {
 
     _broadcastRoomSnapshot(roomId);
     _advanceMatchIfNeeded(room, excludeConnection: connection.connectionId);
+    _recordMatchIfFinished(room);
     _broadcastRoomSnapshot(roomId);
   }
 
@@ -587,6 +612,7 @@ class ZapitiServer {
     room.setPhase('playing');
     _broadcastRoomSnapshot(room.roomId);
     _advanceMatchIfNeeded(room);
+    _recordMatchIfFinished(room);
     _broadcastRoomSnapshot(room.roomId);
   }
 
@@ -648,7 +674,13 @@ class ZapitiServer {
       name: 'Bot ${seatIndex + 1}',
       teamId: teamId,
       characterId: defaultCharacterIds[seatIndex % defaultCharacterIds.length],
+      aiDifficulty: _botDifficultyForSeat(seatIndex),
     );
+  }
+
+  int _botDifficultyForSeat(int seatIndex) {
+    const difficultiesBySeat = [2, 3, 4, 5];
+    return difficultiesBySeat[seatIndex.clamp(0, difficultiesBySeat.length - 1)];
   }
 
   void _handlePlayCard(
@@ -869,27 +901,72 @@ class ZapitiServer {
     while (!match.isGameFinished && guard < 32) {
       guard += 1;
 
-      match.maybeAutoPlayBots();
-
       if (match.handFinished) {
+        break;
+      }
+
+      if (match.alVerState == AlVerState.awaitingDecision) {
+        final alVerTeamId = match.alVerTeamId;
+        if (alVerTeamId != null && match.teamHasOnlyBots(alVerTeamId)) {
+          final responder = match.botResponderForTeam(alVerTeamId);
+          final play = match.shouldBotPlayAlVer(alVerTeamId);
+          match.chooseAlVerDecision(teamId: alVerTeamId, play: play);
+          _broadcastToRoom(
+            room.roomId,
+            MultiplayerMessage(
+              type: MultiplayerMessageType.chooseAlVerDecision,
+              roomId: room.roomId,
+              playerId: responder.playerId,
+              payload: {'play': play},
+            ),
+          );
+          continue;
+        }
         break;
       }
 
       if (match.hasPendingTruco) {
         final responseTeamId = match.trucoResponseTeamId;
         if (match.teamHasOnlyBots(responseTeamId)) {
-          final responder = match.players.firstWhere(
-            (player) => player.teamId == responseTeamId && player.isBot,
-          );
-          match.acceptTruco(teamId: responseTeamId);
-          _broadcastToRoom(
-            room.roomId,
-            MultiplayerMessage(
-              type: MultiplayerMessageType.acceptTruco,
-              roomId: room.roomId,
-              playerId: responder.playerId,
-            ),
-          );
+          final decision = match.chooseBotTrucoDecision(responseTeamId);
+          switch (decision.action) {
+            case BotTrucoAction.accept:
+              match.acceptTruco(teamId: responseTeamId);
+              _broadcastToRoom(
+                room.roomId,
+                MultiplayerMessage(
+                  type: MultiplayerMessageType.acceptTruco,
+                  roomId: room.roomId,
+                  playerId: decision.player.playerId,
+                ),
+              );
+              break;
+            case BotTrucoAction.pass:
+              match.passTruco(passingTeamId: responseTeamId);
+              _broadcastToRoom(
+                room.roomId,
+                MultiplayerMessage(
+                  type: MultiplayerMessageType.passTruco,
+                  roomId: room.roomId,
+                  playerId: decision.player.playerId,
+                ),
+              );
+              break;
+            case BotTrucoAction.raise:
+              final value = decision.value;
+              if (value == null) break;
+              match.raiseTruco(decision.player.playerId, value: value);
+              _broadcastToRoom(
+                room.roomId,
+                MultiplayerMessage(
+                  type: MultiplayerMessageType.raiseTruco,
+                  roomId: room.roomId,
+                  playerId: decision.player.playerId,
+                  payload: {'value': value},
+                ),
+              );
+              break;
+          }
           continue;
         }
         break;
@@ -904,6 +981,23 @@ class ZapitiServer {
       }
 
       final bot = match.currentPlayer;
+      if (match.shouldBotCallTruco(bot)) {
+        match.callTruco(
+          bot.playerId,
+          value: TrucoRules.firstTrucoValue,
+        );
+        _broadcastToRoom(
+          room.roomId,
+          MultiplayerMessage(
+            type: MultiplayerMessageType.callTruco,
+            roomId: room.roomId,
+            playerId: bot.playerId,
+            payload: {'value': TrucoRules.firstTrucoValue},
+          ),
+        );
+        continue;
+      }
+
       final card = match.chooseBotCard(bot);
       try {
         match.playCard(bot.playerId, card);
@@ -926,6 +1020,17 @@ class ZapitiServer {
         break;
       }
     }
+  }
+
+  void _recordMatchIfFinished(Room room) {
+    final match = room.match;
+    if (match == null || match.winningTeamId == null) return;
+
+    final matchId = '${match.roomId}_${match.seed}';
+    if (_recordedMatchIds.contains(matchId)) return;
+
+    rankingStore.recordFinishedMatch(match);
+    _recordedMatchIds.add(matchId);
   }
 
   /// Manejar desconexión
@@ -993,6 +1098,7 @@ class ZapitiServer {
 
       final localPayload = Map<String, dynamic>.from(payload)
         ..['players'] = _localPlayersForPlayer(room.match!, seat.playerId)
+        ..['controlledPlayerIds'] = [seat.playerId]
         ..['localSeatIndex'] = localPlayerIndex < 0 ? 0 : localPlayerIndex;
 
       connection.send(MultiplayerMessage(
@@ -1008,10 +1114,7 @@ class ZapitiServer {
     final match = room.match!;
     return {
       'seed': match.seed,
-      'controlledPlayerIds': [
-        for (final player in match.players)
-          if (!player.isBot) player.playerId,
-      ],
+      'controlledPlayerIds': const <String>[],
       'players': [for (final player in match.players) player.toJson()],
       'fixedHands': {
         for (final entry in match.hands.entries)
