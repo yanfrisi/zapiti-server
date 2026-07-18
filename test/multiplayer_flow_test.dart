@@ -43,7 +43,9 @@ void main() {
           'teamName': '',
         },
       ));
-      profiles.add(await clients[index].expectType(MultiplayerMessageType.profile));
+      profiles.add(
+        await clients[index].expectType(MultiplayerMessageType.profile),
+      );
     }
 
     clients[0].send(MultiplayerMessage(
@@ -301,7 +303,9 @@ Future<_StartedMatchSetup> _createFourPlayerStartedMatch() async {
         'teamName': '',
       },
     ));
-    profiles.add(await clients[index].expectType(MultiplayerMessageType.profile));
+    profiles.add(
+      await clients[index].expectType(MultiplayerMessageType.profile),
+    );
   }
 
   clients[0].send(MultiplayerMessage(
@@ -486,7 +490,8 @@ Future<Map<String, dynamic>> _playAutomatedHumanMatch({
 String _matchSignature(Map<String, dynamic> match) {
   final hands = match['hands'] as Map? ?? const {};
   final handSizes = [
-    for (final entry in hands.entries) '${entry.key}:${(entry.value as List).length}',
+    for (final entry in hands.entries)
+      '${entry.key}:${(entry.value as List).length}',
   ]..sort();
   final score = match['score'] as Map? ?? const {};
   return [
@@ -624,6 +629,22 @@ class _TestClient {
         .firstWhere((message) {
           if (message.type != MultiplayerMessageType.roomSnapshot) return false;
           return message.payload?['match'] is Map;
+        })
+        .timeout(const Duration(seconds: 3));
+    return message.payload ?? const {};
+  }
+
+  Future<Map<String, dynamic>> expectChangedMatchSnapshot(
+    String previousSignature,
+  ) async {
+    final message = await _messages.stream
+        .firstWhere((message) {
+          if (message.type != MultiplayerMessageType.roomSnapshot) return false;
+          final payload = message.payload;
+          final match = payload?['match'];
+          if (match is! Map) return false;
+          return _matchSignature(Map<String, dynamic>.from(match)) !=
+              previousSignature;
         })
         .timeout(const Duration(seconds: 3));
     return message.payload ?? const {};
