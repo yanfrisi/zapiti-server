@@ -75,7 +75,8 @@ class ZapitiServer {
   }
 
   String _sanitizeTeamName(String? rawTeamName) {
-    final normalized = rawTeamName?.trim().replaceAll(RegExp(r'\s+'), ' ') ?? '';
+    final normalized =
+        rawTeamName?.trim().replaceAll(RegExp(r'\s+'), ' ') ?? '';
     if (normalized.length <= 22) return normalized;
     return normalized.substring(0, 22).trimRight();
   }
@@ -248,7 +249,14 @@ class ZapitiServer {
         teamName: selectedTeam?['teamName']?.toString() ?? teamName,
       );
       if (preferredCharacterId != null) {
-        room.setPlayerCharacter(playerId, preferredCharacterId);
+        try {
+          room.setPlayerCharacter(playerId, preferredCharacterId);
+        } catch (e) {
+          final errorText = e is StateError ? e.message : e.toString();
+          if (!errorText.contains('taken')) {
+            rethrow;
+          }
+        }
       }
       connection.setCurrentRoom(room.roomId, playerId);
 
@@ -343,7 +351,14 @@ class ZapitiServer {
 
       final playerId = room.seats.last.playerId;
       if (preferredCharacterId != null) {
-        room.setPlayerCharacter(playerId, preferredCharacterId);
+        try {
+          room.setPlayerCharacter(playerId, preferredCharacterId);
+        } catch (e) {
+          final errorText = e is StateError ? e.message : e.toString();
+          if (!errorText.contains('taken')) {
+            rethrow;
+          }
+        }
       }
       connection.setCurrentRoom(roomId, playerId);
 
