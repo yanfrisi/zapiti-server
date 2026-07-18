@@ -69,6 +69,9 @@ void main() {
           MultiplayerSeat(
             playerId: 'p1',
             name: 'Juan',
+            username: 'juan',
+            pairId: 'p1+p2',
+            teamName: 'Los Bravos',
             seatIndex: 0,
             teamId: 1,
             characterId: 'p2',
@@ -90,6 +93,9 @@ void main() {
       expect(json['phase'], 'lobby');
       expect(json['seats'].length, 2);
       expect(json['seats'][0]['name'], 'Juan');
+      expect(json['seats'][0]['username'], 'juan');
+      expect(json['seats'][0]['pairId'], 'p1+p2');
+      expect(json['seats'][0]['teamName'], 'Los Bravos');
       expect(json['seats'][0]['teamId'], 1);
       expect(json['seats'][0]['characterId'], 'p2');
       expect(json['seats'][1]['ready'], true);
@@ -121,6 +127,9 @@ void main() {
           {
             'playerId': 'p1',
             'name': 'Juan',
+            'username': 'juan',
+            'pairId': 'p1+p2',
+            'teamName': 'Los Bravos',
             'seatIndex': 0,
             'teamId': 1,
             'ready': false,
@@ -134,6 +143,9 @@ void main() {
       expect(snapshot.roomId, 'A7K2');
       expect(snapshot.seats.length, 1);
       expect(snapshot.seats[0].name, 'Juan');
+      expect(snapshot.seats[0].username, 'juan');
+      expect(snapshot.seats[0].pairId, 'p1+p2');
+      expect(snapshot.seats[0].teamName, 'Los Bravos');
       expect(snapshot.seats[0].teamId, 1);
       expect(snapshot.seats[0].characterId, 'p4');
     });

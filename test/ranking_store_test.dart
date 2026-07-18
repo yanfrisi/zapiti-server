@@ -238,6 +238,8 @@ void main() {
           name: 'Juan',
           teamId: 1,
           connectionId: 'c1',
+          pairId: 'ana_profile+juan_profile',
+          teamName: 'Nombre temporal',
           characterId: 'p1',
         ),
         MatchPlayer(
@@ -251,6 +253,8 @@ void main() {
           name: 'Ana',
           teamId: 1,
           connectionId: 'c2',
+          pairId: 'ana_profile+juan_profile',
+          teamName: 'Nombre temporal',
           characterId: 'p3',
         ),
         MatchPlayer(
