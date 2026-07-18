@@ -49,6 +49,27 @@ class ZapitiServer {
     return trimmed;
   }
 
+  String? _sanitizePin(String? rawPin) {
+    if (rawPin == null) return null;
+    final trimmed = rawPin.trim();
+    if (!RegExp(r'^\d{4,8}$').hasMatch(trimmed)) return null;
+    return trimmed;
+  }
+
+  String? _sanitizeSessionToken(String? rawToken) {
+    if (rawToken == null) return null;
+    final trimmed = rawToken.trim();
+    if (trimmed.length < 24 || trimmed.length > 128) return null;
+    if (!RegExp(r'^[A-Za-z0-9_\-=]+$').hasMatch(trimmed)) return null;
+    return trimmed;
+  }
+
+  String _sanitizeTeamName(String? rawTeamName) {
+    final normalized = rawTeamName?.trim().replaceAll(RegExp(r'\s+'), ' ') ?? '';
+    if (normalized.length <= 22) return normalized;
+    return normalized.substring(0, 22).trimRight();
+  }
+
   /// Crear handler de WebSocket
   shelf.Handler _createWebSocketHandler() {
     return webSocketHandler(_handleWebSocketConnection);
@@ -98,6 +119,12 @@ class ZapitiServer {
         case MultiplayerMessageType.selectCharacter:
           _handleSelectCharacter(connection, message);
           break;
+        case MultiplayerMessageType.updateProfile:
+          _handleUpdateProfile(connection, message);
+          break;
+        case MultiplayerMessageType.recoverProfile:
+          _handleRecoverProfile(connection, message);
+          break;
         case MultiplayerMessageType.getRanking:
           _handleGetRanking(connection);
           break;
@@ -144,12 +171,26 @@ class ZapitiServer {
     }
 
     final preferredCharacterId = payload['characterId'] as String?;
+    final pin = _sanitizePin(payload['pin']?.toString());
+    final sessionToken =
+        _sanitizeSessionToken(payload['sessionToken']?.toString());
+    final teamName = _sanitizeTeamName(payload['teamName']?.toString());
 
     final playerId = _sanitizePlayerId(message.playerId) ??
         'player_${DateTime.now().millisecondsSinceEpoch}_${_connections.length}';
 
     Room? room;
     try {
+      if (!_syncProfileForRoom(
+        connection,
+        playerId: playerId,
+        playerName: playerName,
+        teamName: teamName,
+        pin: pin,
+        sessionToken: sessionToken,
+      )) {
+        return;
+      }
       room =
           roomManager.createRoom(playerName, playerId, connection.connectionId);
       if (preferredCharacterId != null) {
@@ -197,11 +238,25 @@ class ZapitiServer {
     }
 
     final preferredCharacterId = payload['characterId'] as String?;
+    final pin = _sanitizePin(payload['pin']?.toString());
+    final sessionToken =
+        _sanitizeSessionToken(payload['sessionToken']?.toString());
+    final teamName = _sanitizeTeamName(payload['teamName']?.toString());
     final requestedPlayerId = _sanitizePlayerId(message.playerId) ??
         'player_${DateTime.now().millisecondsSinceEpoch}_${_connections.length}';
 
     Room? room;
     try {
+      if (!_syncProfileForRoom(
+        connection,
+        playerId: requestedPlayerId,
+        playerName: playerName,
+        teamName: teamName,
+        pin: pin,
+        sessionToken: sessionToken,
+      )) {
+        return;
+      }
       room = roomManager.joinRoom(
         roomId,
         playerName,
@@ -247,6 +302,110 @@ class ZapitiServer {
     connection.send(MultiplayerMessage(
       type: MultiplayerMessageType.ranking,
       payload: rankingStore.snapshot(),
+    ));
+  }
+
+  void _handleUpdateProfile(
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) {
+    final payload = message.payload;
+    final playerId = _sanitizePlayerId(message.playerId);
+    if (payload == null || playerId == null) {
+      connection.sendError('invalid_payload', 'Missing profile payload');
+      return;
+    }
+
+    final name = Room.sanitizePlayerName(payload['name']);
+    final pin = _sanitizePin(payload['pin']?.toString());
+    final sessionToken =
+        _sanitizeSessionToken(payload['sessionToken']?.toString());
+    final teamName = _sanitizeTeamName(payload['teamName']?.toString());
+    if (name == null) {
+      connection.sendError('invalid_payload', 'Invalid profile name');
+      return;
+    }
+
+    final profile = pin != null
+        ? rankingStore.upsertPlayerProfile(
+            playerId: playerId,
+            name: name,
+            pin: pin,
+            teamName: teamName,
+          )
+        : sessionToken == null
+            ? null
+            : rankingStore.updatePlayerProfileWithSession(
+                playerId: playerId,
+                name: name,
+                teamName: teamName,
+                sessionToken: sessionToken,
+              );
+    if (profile == null) {
+      connection.sendError('auth_failed', 'Invalid profile session');
+      return;
+    }
+    connection.send(MultiplayerMessage(
+      type: MultiplayerMessageType.profile,
+      playerId: playerId,
+      payload: profile,
+    ));
+  }
+
+  bool _syncProfileForRoom(
+    ClientConnection connection, {
+    required String playerId,
+    required String playerName,
+    required String teamName,
+    required String? pin,
+    required String? sessionToken,
+  }) {
+    if (sessionToken != null) {
+      final profile = rankingStore.updatePlayerProfileWithSession(
+        playerId: playerId,
+        name: playerName,
+        teamName: teamName,
+        sessionToken: sessionToken,
+      );
+      if (profile == null) {
+        connection.sendError('auth_failed', 'Invalid profile session');
+        return false;
+      }
+      return true;
+    }
+
+    if (pin != null) {
+      rankingStore.upsertPlayerProfile(
+        playerId: playerId,
+        name: playerName,
+        pin: pin,
+        teamName: teamName,
+      );
+    }
+    return true;
+  }
+
+  void _handleRecoverProfile(
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) {
+    final payload = message.payload;
+    final pin = _sanitizePin(payload?['pin']?.toString());
+    if (pin == null) {
+      connection.sendError('invalid_payload', 'Invalid recovery pin');
+      return;
+    }
+
+    final profile = rankingStore.recoverPlayerProfile(pin: pin);
+    if (profile == null) {
+      connection.sendError('profile_not_found', 'Profile not found');
+      return;
+    }
+
+    connection.send(MultiplayerMessage(
+      type: MultiplayerMessageType.profile,
+      playerId: profile['playerId']?.toString(),
+      payload: profile,
     ));
   }
 

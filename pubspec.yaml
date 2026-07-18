@@ -6,8 +6,10 @@ environment:
   sdk: ^3.0.0
 
 dependencies:
+  crypto: ^3.0.3
   shelf: ^1.4.1
   shelf_web_socket: ^3.0.0
+  sqlite3: ^2.4.6
 
 dev_dependencies:
   test: ^1.24.0

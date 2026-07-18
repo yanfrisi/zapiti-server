@@ -178,6 +178,37 @@ void main() {
       expect(decoded.type, MultiplayerMessageType.ranking);
       expect(decoded.payload!['pairs'], isA<List<dynamic>>());
     });
+
+    test('encode and decode profile messages', () {
+      final update = MultiplayerMessage(
+        type: MultiplayerMessageType.updateProfile,
+        playerId: 'player_1',
+        payload: {'name': 'Juan', 'pin': '123456'},
+      );
+      final profile = MultiplayerMessage(
+        type: MultiplayerMessageType.profile,
+        playerId: 'player_1',
+        payload: {
+          'playerId': 'player_1',
+          'name': 'Juan',
+          'pin': '123456',
+          'teamName': 'Los Bravos',
+        },
+      );
+
+      expect(
+        MultiplayerMessage.decode(update.encode()).type,
+        MultiplayerMessageType.updateProfile,
+      );
+      expect(
+        MultiplayerMessage.decode(profile.encode()).type,
+        MultiplayerMessageType.profile,
+      );
+      expect(
+        MultiplayerMessage.decode(profile.encode()).payload!['teamName'],
+        'Los Bravos',
+      );
+    });
   });
 
   group('MultiplayerSeat', () {
