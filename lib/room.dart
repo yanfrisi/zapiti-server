@@ -39,6 +39,9 @@ class Room {
   MultiplayerSeat addPlayer({
     required String playerId,
     required String name,
+    String? username,
+    String? pairId,
+    String? teamName,
     required String connectionId,
     String? characterId,
   }) {
@@ -66,6 +69,9 @@ class Room {
     final seat = MultiplayerSeat(
       playerId: playerId,
       name: cleanName,
+      username: username,
+      pairId: pairId,
+      teamName: teamName,
       seatIndex: seatIndex,
       teamId: seatIndex.isEven ? 1 : 2,
       ready: false,
@@ -115,6 +121,23 @@ class Room {
     }
 
     _seats[index] = _seats[index].copyWith(characterId: characterId);
+  }
+
+  void setPlayerTeam(
+    String playerId, {
+    required String pairId,
+    required String teamName,
+  }) {
+    final index = _seats.indexWhere((seat) => seat.playerId == playerId);
+    if (index < 0) {
+      throw StateError('Player not found in room');
+    }
+
+    _seats[index] = _seats[index].copyWith(
+      pairId: pairId,
+      teamName: teamName,
+      ready: false,
+    );
   }
 
   /// Verificar si todos los jugadores (al menos 2) están listos

@@ -277,6 +277,23 @@ class RankingStore {
     return _publicTeam(pair, playerId);
   }
 
+  Map<String, dynamic>? teamForPlayer({
+    required String playerId,
+    required String sessionToken,
+    required String pairId,
+  }) {
+    final player = _playerById(playerId);
+    final pair = _pairById(pairId);
+    if (player == null ||
+        pair == null ||
+        !_sessionTokenMatches(player, sessionToken) ||
+        !_pairContainsPlayer(pair, playerId) ||
+        _asInt(pair['archivedAt']) != 0) {
+      return null;
+    }
+    return _publicTeam(pair, playerId);
+  }
+
   void recordFinishedMatch(MatchState match) {
     final winnerTeamId = match.winningTeamId;
     if (winnerTeamId == null) return;
@@ -321,8 +338,11 @@ class RankingStore {
             .toList();
         if (humanTeamPlayers.isEmpty) continue;
 
-        final pairId = _pairId(humanTeamPlayers);
-        final pairStats = _pairById(pairId) ??
+        final explicitPair = _explicitPairForTeam(humanTeamPlayers);
+        final pairId =
+            explicitPair?['pairId']?.toString() ?? _pairId(humanTeamPlayers);
+        final pairStats = explicitPair ??
+            _pairById(pairId) ??
             <String, dynamic>{
               'pairId': pairId,
               'playerIds':
@@ -334,7 +354,8 @@ class RankingStore {
               'pointsAgainst': 0,
               'createdAt': finishedAt,
             };
-        pairStats['teamName'] = _teamName(humanTeamPlayers);
+        pairStats['teamName'] =
+            explicitPair?['teamName']?.toString() ?? _teamName(humanTeamPlayers);
         pairStats['updatedAt'] = finishedAt;
         pairStats['played'] = _asInt(pairStats['played']) + 1;
         if (teamId == winnerTeamId) {
@@ -884,6 +905,25 @@ class RankingStore {
         for (final teammate in teammates) teammate['username'],
       ],
     };
+  }
+
+  Map<String, dynamic>? _explicitPairForTeam(List<MatchPlayer> players) {
+    final humanIds = players.map((player) => player.playerId).toSet();
+    final pairIds = players
+        .map((player) => player.pairId?.trim() ?? '')
+        .where((pairId) => pairId.isNotEmpty)
+        .toSet();
+
+    for (final pairId in pairIds) {
+      final pair = _pairById(pairId);
+      final rawPlayerIds = pair?['playerIds'];
+      if (pair == null || rawPlayerIds is! List) continue;
+      final storedIds = rawPlayerIds.map((entry) => entry.toString()).toSet();
+      if (humanIds.every(storedIds.contains)) {
+        return pair;
+      }
+    }
+    return null;
   }
 
   String _pairId(List<MatchPlayer> players) {

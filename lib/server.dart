@@ -153,6 +153,9 @@ class ZapitiServer {
         case MultiplayerMessageType.archiveTeam:
           _handleArchiveTeam(connection, message);
           break;
+        case MultiplayerMessageType.selectTeam:
+          _handleSelectTeam(connection, message);
+          break;
         case MultiplayerMessageType.getRanking:
           _handleGetRanking(connection);
           break;
@@ -206,6 +209,7 @@ class ZapitiServer {
     final sessionToken =
         _sanitizeSessionToken(payload['sessionToken']?.toString());
     final teamName = _sanitizeTeamName(payload['teamName']?.toString());
+    final pairId = _sanitizePairId(payload['pairId']?.toString());
 
     final playerId = _sanitizePlayerId(message.playerId) ??
         'player_${DateTime.now().millisecondsSinceEpoch}_${_connections.length}';
@@ -223,8 +227,24 @@ class ZapitiServer {
       )) {
         return;
       }
-      room =
-          roomManager.createRoom(playerName, playerId, connection.connectionId);
+      final selectedTeam = pairId == null
+          ? null
+          : _authenticatedTeamForPlayer(
+              connection,
+              playerId: playerId,
+              sessionToken: sessionToken,
+              pairId: pairId,
+            );
+      if (pairId != null && selectedTeam == null) return;
+
+      room = roomManager.createRoom(
+        playerName,
+        playerId,
+        connection.connectionId,
+        username: username,
+        pairId: selectedTeam?['pairId']?.toString(),
+        teamName: selectedTeam?['teamName']?.toString() ?? teamName,
+      );
       if (preferredCharacterId != null) {
         room.setPlayerCharacter(playerId, preferredCharacterId);
       }
@@ -277,6 +297,7 @@ class ZapitiServer {
     final sessionToken =
         _sanitizeSessionToken(payload['sessionToken']?.toString());
     final teamName = _sanitizeTeamName(payload['teamName']?.toString());
+    final pairId = _sanitizePairId(payload['pairId']?.toString());
     final requestedPlayerId = _sanitizePlayerId(message.playerId) ??
         'player_${DateTime.now().millisecondsSinceEpoch}_${_connections.length}';
 
@@ -293,11 +314,24 @@ class ZapitiServer {
       )) {
         return;
       }
+      final selectedTeam = pairId == null
+          ? null
+          : _authenticatedTeamForPlayer(
+              connection,
+              playerId: requestedPlayerId,
+              sessionToken: sessionToken,
+              pairId: pairId,
+            );
+      if (pairId != null && selectedTeam == null) return;
+
       room = roomManager.joinRoom(
         roomId,
         playerName,
         requestedPlayerId,
         connection.connectionId,
+        username: username,
+        pairId: selectedTeam?['pairId']?.toString(),
+        teamName: selectedTeam?['teamName']?.toString() ?? teamName,
       );
 
       if (room == null) {
@@ -570,6 +604,76 @@ class ZapitiServer {
     _sendTeamsForPlayer(connection, playerId, sessionToken);
   }
 
+  void _handleSelectTeam(
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) {
+    final roomId = message.roomId;
+    final payload = message.payload;
+    final playerId = _sanitizePlayerId(message.playerId);
+    final sessionToken =
+        _sanitizeSessionToken(payload?['sessionToken']?.toString());
+    final pairId = _sanitizePairId(payload?['pairId']?.toString());
+    if (roomId == null ||
+        playerId == null ||
+        sessionToken == null ||
+        pairId == null) {
+      connection.sendError('invalid_payload', 'Invalid team selection');
+      return;
+    }
+
+    final room = roomManager.getRoom(roomId);
+    if (room == null) {
+      connection.sendError('room_not_found', 'Room not found');
+      return;
+    }
+    if (room.phase != 'lobby') {
+      connection.sendError('room_in_progress', 'Team selection is locked');
+      return;
+    }
+    if (!room.containsPlayer(playerId)) {
+      connection.sendError('player_not_found', 'Player not in room');
+      return;
+    }
+
+    final team = _authenticatedTeamForPlayer(
+      connection,
+      playerId: playerId,
+      sessionToken: sessionToken,
+      pairId: pairId,
+    );
+    if (team == null) return;
+
+    room.setPlayerTeam(
+      playerId,
+      pairId: team['pairId']?.toString() ?? pairId,
+      teamName: team['teamName']?.toString() ?? '',
+    );
+    _broadcastRoomSnapshot(roomId);
+  }
+
+  Map<String, dynamic>? _authenticatedTeamForPlayer(
+    ClientConnection connection, {
+    required String playerId,
+    required String? sessionToken,
+    required String pairId,
+  }) {
+    if (sessionToken == null) {
+      connection.sendError('auth_failed', 'Invalid profile session');
+      return null;
+    }
+    final team = rankingStore.teamForPlayer(
+      playerId: playerId,
+      sessionToken: sessionToken,
+      pairId: pairId,
+    );
+    if (team == null) {
+      connection.sendError('team_not_found', 'Team not found');
+      return null;
+    }
+    return team;
+  }
+
   void _sendTeamsForPlayer(
     ClientConnection connection,
     String playerId,
@@ -655,6 +759,13 @@ class ZapitiServer {
       connection.sendError('invalid_payload', 'Missing ready status');
       return;
     }
+    if (ready && _requiresTeamSelection(room, playerId)) {
+      connection.sendError(
+        'team_required',
+        'Select or create a team before getting ready',
+      );
+      return;
+    }
 
     room.setPlayerReady(playerId, ready);
     print('Player $playerId ready: $ready');
@@ -666,6 +777,21 @@ class ZapitiServer {
     if (room.match == null && room.areAllReady() && room.seats.length >= 2) {
       _startMatch(room);
     }
+  }
+
+  bool _requiresTeamSelection(Room room, String playerId) {
+    final localSeat = room.seats.cast<MultiplayerSeat?>().firstWhere(
+          (seat) => seat?.playerId == playerId,
+          orElse: () => null,
+        );
+    if (localSeat == null) return false;
+    final hasHumanTeammate = room.seats.any((seat) {
+      if (seat.playerId == playerId) return false;
+      if ((seat.username ?? '').trim().isEmpty) return false;
+      if (room.seats.length == 2) return true;
+      return seat.teamId == localSeat.teamId;
+    });
+    return hasHumanTeammate && (localSeat.pairId ?? '').trim().isEmpty;
   }
 
   void _handleSelectCharacter(
@@ -996,6 +1122,8 @@ class ZapitiServer {
       name: seat.name,
       teamId: teamId,
       connectionId: room.getConnectionId(seat.playerId),
+      pairId: seat.pairId,
+      teamName: seat.teamName,
       characterId: seat.characterId ??
           defaultCharacterIds[seat.seatIndex % defaultCharacterIds.length],
     );

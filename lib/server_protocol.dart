@@ -17,6 +17,7 @@ enum MultiplayerMessageType {
   createTeam('create_team'),
   updateTeam('update_team'),
   archiveTeam('archive_team'),
+  selectTeam('select_team'),
   teams('teams'),
   getRanking('get_ranking'),
   ranking('ranking'),
@@ -117,6 +118,9 @@ class MultiplayerMessage {
 class MultiplayerSeat {
   final String playerId;
   final String name;
+  final String? username;
+  final String? pairId;
+  final String? teamName;
   final int seatIndex;
   final int teamId;
   final bool ready;
@@ -126,6 +130,9 @@ class MultiplayerSeat {
   MultiplayerSeat({
     required this.playerId,
     required this.name,
+    this.username,
+    this.pairId,
+    this.teamName,
     required this.seatIndex,
     required this.teamId,
     this.ready = false,
@@ -137,6 +144,9 @@ class MultiplayerSeat {
   MultiplayerSeat copyWith({
     String? playerId,
     String? name,
+    String? username,
+    String? pairId,
+    String? teamName,
     int? seatIndex,
     int? teamId,
     bool? ready,
@@ -146,6 +156,9 @@ class MultiplayerSeat {
     return MultiplayerSeat(
       playerId: playerId ?? this.playerId,
       name: name ?? this.name,
+      username: username ?? this.username,
+      pairId: pairId ?? this.pairId,
+      teamName: teamName ?? this.teamName,
       seatIndex: seatIndex ?? this.seatIndex,
       teamId: teamId ?? this.teamId,
       ready: ready ?? this.ready,
@@ -158,6 +171,9 @@ class MultiplayerSeat {
   Map<String, dynamic> toJson() => {
         'playerId': playerId,
         'name': name,
+        if (username != null) 'username': username,
+        if (pairId != null) 'pairId': pairId,
+        if (teamName != null) 'teamName': teamName,
         'seatIndex': seatIndex,
         'teamId': teamId,
         'ready': ready,
@@ -171,6 +187,9 @@ class MultiplayerSeat {
     return MultiplayerSeat(
       playerId: json['playerId'] as String,
       name: json['name'] as String,
+      username: json['username'] as String?,
+      pairId: json['pairId'] as String?,
+      teamName: json['teamName'] as String?,
       seatIndex: seatIndex,
       teamId: json['teamId'] as int? ?? (seatIndex.isEven ? 1 : 2),
       ready: json['ready'] as bool? ?? false,

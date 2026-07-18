@@ -7,7 +7,14 @@ class RoomManager {
   final _random = Random();
 
   /// Crear una nueva sala
-  Room createRoom(String playerName, String playerId, String connectionId) {
+  Room createRoom(
+    String playerName,
+    String playerId,
+    String connectionId, {
+    String? username,
+    String? pairId,
+    String? teamName,
+  }) {
     final roomId = _generateRoomCode();
     final createdAt = DateTime.now().millisecondsSinceEpoch;
 
@@ -15,6 +22,9 @@ class RoomManager {
     room.addPlayer(
       playerId: playerId,
       name: playerName,
+      username: username,
+      pairId: pairId,
+      teamName: teamName,
       connectionId: connectionId,
     );
 
@@ -28,8 +38,11 @@ class RoomManager {
     String roomId,
     String playerName,
     String playerId,
-    String connectionId,
-  ) {
+    String connectionId, {
+    String? username,
+    String? pairId,
+    String? teamName,
+  }) {
     final room = _rooms[roomId];
     if (room == null) return null;
 
@@ -44,6 +57,9 @@ class RoomManager {
     room.addPlayer(
       playerId: playerId,
       name: playerName,
+      username: username,
+      pairId: pairId,
+      teamName: teamName,
       connectionId: connectionId,
     );
 

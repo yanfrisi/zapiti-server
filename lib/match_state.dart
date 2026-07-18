@@ -121,6 +121,8 @@ class MatchPlayer {
   final String name;
   final int teamId;
   final String? connectionId;
+  final String? pairId;
+  final String? teamName;
   final String characterId;
   final int aiDifficulty;
 
@@ -129,6 +131,8 @@ class MatchPlayer {
     required this.name,
     required this.teamId,
     this.connectionId,
+    this.pairId,
+    this.teamName,
     required this.characterId,
     this.aiDifficulty = 3,
   });
@@ -139,6 +143,8 @@ class MatchPlayer {
         'playerId': playerId,
         'name': name,
         'teamId': teamId,
+        if (pairId != null) 'pairId': pairId,
+        if (teamName != null) 'teamName': teamName,
         'characterId': characterId,
         if (isBot) 'aiDifficulty': aiDifficulty,
       };
