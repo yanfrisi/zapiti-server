@@ -18,6 +18,7 @@ class ZapitiServer {
   final RoomManager roomManager = RoomManager();
   final RankingStore rankingStore;
   static const int _multiplayerBotDifficulty = 4;
+  HttpServer? _httpServer;
 
   // Map de connectionId -> ClientConnection
   final Map<String, ClientConnection> _connections = {};
@@ -1636,9 +1637,18 @@ class ZapitiServer {
       return webSocketHandler(request);
     };
 
-    await io.serve(handler, InternetAddress.anyIPv4, port);
+    _httpServer = await io.serve(handler, InternetAddress.anyIPv4, port);
+    port = _httpServer!.port;
 
     print('Zapiti server listening on ws://$host:$port/');
     print('Health check: http://$host:$port/health');
+  }
+
+  Future<void> stop({bool closeRankingStore = true}) async {
+    await _httpServer?.close(force: true);
+    _httpServer = null;
+    if (closeRankingStore) {
+      rankingStore.close();
+    }
   }
 }
