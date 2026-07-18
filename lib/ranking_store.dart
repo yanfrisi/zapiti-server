@@ -35,6 +35,7 @@ class RankingStore {
         '''
         SELECT *
         FROM pairs
+        WHERE archived_at = 0
         ORDER BY wins DESC, points_for DESC, team_name ASC
         LIMIT ?
         ''',
@@ -43,7 +44,8 @@ class RankingStore {
         _pairFromRow(row),
     ];
     final allPairs = [
-      for (final row in _db.select('SELECT * FROM pairs')) _pairFromRow(row),
+      for (final row in _db.select('SELECT * FROM pairs WHERE archived_at = 0'))
+        _pairFromRow(row),
     ];
     final players = [
       for (final row in _db.select(
@@ -77,13 +79,23 @@ class RankingStore {
     };
   }
 
-  Map<String, dynamic> upsertPlayerProfile({
+  Map<String, dynamic>? upsertPlayerProfile({
     required String playerId,
+    required String username,
     required String name,
-    required String pin,
+    required String password,
     String teamName = '',
   }) {
     final now = DateTime.now().millisecondsSinceEpoch;
+    final normalizedUsername = _normalizeUsername(username);
+    final existingByUsername = _playerByUsername(normalizedUsername);
+    if (existingByUsername != null &&
+        existingByUsername['playerId']?.toString() != playerId) {
+      if (!_passwordMatches(existingByUsername, password)) {
+        return null;
+      }
+      playerId = existingByUsername['playerId']?.toString() ?? playerId;
+    }
     final current = _playerById(playerId) ??
         <String, dynamic>{
           'playerId': playerId,
@@ -97,28 +109,30 @@ class RankingStore {
         };
 
     current['playerId'] = playerId;
+    current['username'] = normalizedUsername;
     current['name'] = name;
     current['teamName'] = teamName;
     current['updatedAt'] = now;
-    _setPinHash(current, pin);
+    _setPasswordHash(current, password);
     final sessionToken = _issueSessionToken(current);
     _upsertPlayerRow(current);
     return _publicProfile(current, sessionToken: sessionToken);
   }
 
-  Map<String, dynamic>? recoverPlayerProfile({required String pin}) {
-    for (final row in _db.select('SELECT * FROM players')) {
-      final player = _playerFromRow(row);
-      if (_pinMatches(player, pin)) {
-        if (player['pin'] != null) {
-          _setPinHash(player, pin);
-        }
-        final sessionToken = _issueSessionToken(player);
-        _upsertPlayerRow(player);
-        return _publicProfile(player, sessionToken: sessionToken);
-      }
+  Map<String, dynamic>? recoverPlayerProfile({
+    required String username,
+    required String password,
+  }) {
+    final player = _playerByUsername(_normalizeUsername(username));
+    if (player == null || !_passwordMatches(player, password)) {
+      return null;
     }
-    return null;
+    if (player['pin'] != null) {
+      _setPasswordHash(player, password);
+    }
+    final sessionToken = _issueSessionToken(player);
+    _upsertPlayerRow(player);
+    return _publicProfile(player, sessionToken: sessionToken);
   }
 
   Map<String, dynamic>? updatePlayerProfileWithSession({
@@ -145,6 +159,122 @@ class RankingStore {
   }) {
     final player = _playerById(playerId);
     return player != null && _sessionTokenMatches(player, sessionToken);
+  }
+
+  List<Map<String, dynamic>> teamsForPlayer({
+    required String playerId,
+    required String sessionToken,
+    bool includeArchived = false,
+  }) {
+    final player = _playerById(playerId);
+    if (player == null || !_sessionTokenMatches(player, sessionToken)) {
+      return const [];
+    }
+
+    final rows = _db.select(
+      includeArchived
+          ? '''
+            SELECT *
+            FROM pairs
+            WHERE player_ids_json LIKE ?
+            ORDER BY archived_at ASC, wins DESC, played DESC, team_name ASC
+            '''
+          : '''
+            SELECT *
+            FROM pairs
+            WHERE player_ids_json LIKE ? AND archived_at = 0
+            ORDER BY wins DESC, played DESC, team_name ASC
+            ''',
+      ['%$playerId%'],
+    );
+    return [
+      for (final row in rows)
+        if (_pairContainsPlayer(_pairFromRow(row), playerId))
+          _publicTeam(_pairFromRow(row), playerId),
+    ];
+  }
+
+  Map<String, dynamic>? createTeamForPlayer({
+    required String playerId,
+    required String sessionToken,
+    required String teammateUsername,
+    required String teamName,
+  }) {
+    final player = _playerById(playerId);
+    if (player == null || !_sessionTokenMatches(player, sessionToken)) {
+      return null;
+    }
+    final teammate = _playerByUsername(_normalizeUsername(teammateUsername));
+    if (teammate == null ||
+        teammate['playerId']?.toString() == player['playerId']?.toString()) {
+      return null;
+    }
+
+    final playerIds = [
+      player['playerId'].toString(),
+      teammate['playerId'].toString(),
+    ]..sort();
+    final pairId = playerIds.join('+');
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final current = _pairById(pairId) ??
+        <String, dynamic>{
+          'pairId': pairId,
+          'playerIds': playerIds,
+          'played': 0,
+          'wins': 0,
+          'losses': 0,
+          'pointsFor': 0,
+          'pointsAgainst': 0,
+          'createdAt': now,
+        };
+    current['teamName'] = teamName.trim().isEmpty
+        ? '${player['name']} / ${teammate['name']}'
+        : teamName;
+    current['updatedAt'] = now;
+    current['archivedAt'] = 0;
+    _upsertPairRow(current);
+    return _publicTeam(current, playerId);
+  }
+
+  Map<String, dynamic>? updateTeamName({
+    required String playerId,
+    required String sessionToken,
+    required String pairId,
+    required String teamName,
+  }) {
+    final player = _playerById(playerId);
+    final pair = _pairById(pairId);
+    if (player == null ||
+        pair == null ||
+        !_sessionTokenMatches(player, sessionToken) ||
+        !_pairContainsPlayer(pair, playerId)) {
+      return null;
+    }
+
+    pair['teamName'] = teamName;
+    pair['updatedAt'] = DateTime.now().millisecondsSinceEpoch;
+    _upsertPairRow(pair);
+    return _publicTeam(pair, playerId);
+  }
+
+  Map<String, dynamic>? archiveTeam({
+    required String playerId,
+    required String sessionToken,
+    required String pairId,
+  }) {
+    final player = _playerById(playerId);
+    final pair = _pairById(pairId);
+    if (player == null ||
+        pair == null ||
+        !_sessionTokenMatches(player, sessionToken) ||
+        !_pairContainsPlayer(pair, playerId)) {
+      return null;
+    }
+
+    pair['archivedAt'] = DateTime.now().millisecondsSinceEpoch;
+    pair['updatedAt'] = pair['archivedAt'];
+    _upsertPairRow(pair);
+    return _publicTeam(pair, playerId);
   }
 
   void recordFinishedMatch(MatchState match) {
@@ -269,6 +399,7 @@ class RankingStore {
         pin_salt TEXT NOT NULL DEFAULT '',
         pin_hash TEXT NOT NULL DEFAULT '',
         pin_updated_at INTEGER NOT NULL DEFAULT 0,
+        username TEXT NOT NULL DEFAULT '',
         session_token_hash TEXT NOT NULL DEFAULT '',
         session_token_issued_at INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL DEFAULT 0,
@@ -281,8 +412,13 @@ class RankingStore {
         points_against INTEGER NOT NULL DEFAULT 0
       )
     ''');
+    _ensureColumn('players', 'username', "TEXT NOT NULL DEFAULT ''");
     _ensureColumn('players', 'session_token_hash', "TEXT NOT NULL DEFAULT ''");
     _ensureColumn('players', 'session_token_issued_at', 'INTEGER NOT NULL DEFAULT 0');
+    _db.execute(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_players_username_unique "
+      "ON players(username) WHERE username <> ''",
+    );
     _db.execute('''
       CREATE TABLE IF NOT EXISTS pairs (
         pair_id TEXT PRIMARY KEY,
@@ -294,9 +430,11 @@ class RankingStore {
         points_for INTEGER NOT NULL DEFAULT 0,
         points_against INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL DEFAULT 0,
-        updated_at INTEGER NOT NULL DEFAULT 0
+        updated_at INTEGER NOT NULL DEFAULT 0,
+        archived_at INTEGER NOT NULL DEFAULT 0
       )
     ''');
+    _ensureColumn('pairs', 'archived_at', 'INTEGER NOT NULL DEFAULT 0');
     _db.execute('''
       CREATE TABLE IF NOT EXISTS matches (
         match_id TEXT PRIMARY KEY,
@@ -335,7 +473,13 @@ class RankingStore {
         if (player == null) continue;
         final legacyPin = player['pin']?.toString();
         if (legacyPin != null && legacyPin.isNotEmpty) {
-          _setPinHash(player, legacyPin);
+          player['username'] = _normalizeUsername(
+            player['username']?.toString() ??
+                player['name']?.toString() ??
+                player['playerId']?.toString() ??
+                '',
+          );
+          _setPasswordHash(player, legacyPin);
         }
         _upsertPlayerRow(player);
       }
@@ -366,6 +510,15 @@ class RankingStore {
     return _playerFromRow(result.first);
   }
 
+  Map<String, dynamic>? _playerByUsername(String username) {
+    final result = _db.select(
+      'SELECT * FROM players WHERE username = ? LIMIT 1',
+      [username],
+    );
+    if (result.isEmpty) return null;
+    return _playerFromRow(result.first);
+  }
+
   Map<String, dynamic>? _pairById(String pairId) {
     final result = _db.select(
       'SELECT * FROM pairs WHERE pair_id = ? LIMIT 1',
@@ -380,10 +533,10 @@ class RankingStore {
       '''
       INSERT OR REPLACE INTO players (
         player_id, name, team_name, pin_hash_algorithm, pin_hash_iterations,
-        pin_salt, pin_hash, pin_updated_at, session_token_hash,
+        pin_salt, pin_hash, pin_updated_at, username, session_token_hash,
         session_token_issued_at, created_at, updated_at, last_played_at,
         played, wins, losses, points_for, points_against
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ''',
       [
         player['playerId']?.toString() ?? '',
@@ -394,6 +547,7 @@ class RankingStore {
         player['pinSalt']?.toString() ?? '',
         player['pinHash']?.toString() ?? '',
         _asInt(player['pinUpdatedAt']),
+        player['username']?.toString() ?? '',
         player['sessionTokenHash']?.toString() ?? '',
         _asInt(player['sessionTokenIssuedAt']),
         _asInt(player['createdAt']),
@@ -413,8 +567,8 @@ class RankingStore {
       '''
       INSERT OR REPLACE INTO pairs (
         pair_id, player_ids_json, team_name, played, wins, losses,
-        points_for, points_against, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        points_for, points_against, created_at, updated_at, archived_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ''',
       [
         pair['pairId']?.toString() ?? '',
@@ -427,6 +581,7 @@ class RankingStore {
         _asInt(pair['pointsAgainst']),
         _asInt(pair['createdAt']),
         _asInt(pair['updatedAt']),
+        _asInt(pair['archivedAt']),
       ],
     );
   }
@@ -455,6 +610,7 @@ class RankingStore {
       'playerId': row['player_id'],
       'name': row['name'],
       'teamName': row['team_name'],
+      'username': row['username'],
       'pinHashAlgorithm': row['pin_hash_algorithm'],
       'pinHashIterations': row['pin_hash_iterations'],
       'pinSalt': row['pin_salt'],
@@ -485,6 +641,7 @@ class RankingStore {
       'pointsAgainst': row['points_against'],
       'createdAt': row['created_at'],
       'updatedAt': row['updated_at'],
+      'archivedAt': row['archived_at'],
     };
   }
 
@@ -547,6 +704,7 @@ class RankingStore {
   }) {
     return {
       'playerId': profile['playerId'],
+      'username': profile['username'] ?? '',
       'name': profile['name'],
       if (sessionToken != null) 'sessionToken': sessionToken,
       'teamName': profile['teamName'] ?? '',
@@ -565,6 +723,7 @@ class RankingStore {
   ) {
     return {
       'playerId': profile['playerId'],
+      'username': profile['username'] ?? '',
       'name': profile['name'],
       'teamName': profile['teamName'] ?? '',
       'played': profile['played'] ?? 0,
@@ -577,21 +736,21 @@ class RankingStore {
     };
   }
 
-  bool _pinMatches(Map<String, dynamic> profile, String pin) {
+  bool _passwordMatches(Map<String, dynamic> profile, String password) {
     final salt = profile['pinSalt']?.toString();
     final hash = profile['pinHash']?.toString();
     if (salt != null && salt.isNotEmpty && hash != null && hash.isNotEmpty) {
-      final candidate = _hashPin(pin, base64Decode(salt));
+      final candidate = _hashPassword(password, base64Decode(salt));
       return _constantTimeEquals(candidate, base64Decode(hash));
     }
 
     final legacyPin = profile['pin']?.toString();
-    return legacyPin != null && legacyPin == pin;
+    return legacyPin != null && legacyPin == password;
   }
 
-  void _setPinHash(Map<String, dynamic> profile, String pin) {
+  void _setPasswordHash(Map<String, dynamic> profile, String password) {
     final salt = _randomBytes(_pinSaltLength);
-    final hash = _hashPin(pin, salt);
+    final hash = _hashPassword(password, salt);
     profile['pinHashAlgorithm'] = _pinHashAlgorithm;
     profile['pinHashIterations'] = _pinHashIterations;
     profile['pinSalt'] = base64Encode(salt);
@@ -620,13 +779,17 @@ class RankingStore {
     return sha256.convert(utf8.encode(sessionToken)).toString();
   }
 
-  List<int> _hashPin(String pin, List<int> salt) {
+  List<int> _hashPassword(String password, List<int> salt) {
     return _pbkdf2HmacSha256(
-      utf8.encode(pin),
+      utf8.encode(password),
       salt,
       iterations: _pinHashIterations,
       length: _pinHashLength,
     );
+  }
+
+  String _normalizeUsername(String username) {
+    return username.trim().toLowerCase();
   }
 
   List<int> _pbkdf2HmacSha256(
@@ -690,6 +853,37 @@ class RankingStore {
       });
     if (playerPairs.isEmpty) return '';
     return playerPairs.first['teamName']?.toString() ?? '';
+  }
+
+  bool _pairContainsPlayer(Map<String, dynamic> pair, String playerId) {
+    final playerIds = pair['playerIds'];
+    return playerIds is List &&
+        playerIds.map((entry) => entry.toString()).contains(playerId);
+  }
+
+  Map<String, dynamic> _publicTeam(
+    Map<String, dynamic> pair,
+    String localPlayerId,
+  ) {
+    final playerIds = (pair['playerIds'] as List<dynamic>? ?? const [])
+        .map((entry) => entry.toString())
+        .toList();
+    final teammates = [
+      for (final memberId in playerIds)
+        if (memberId != localPlayerId) _playerById(memberId),
+    ].whereType<Map<String, dynamic>>().toList();
+    return {
+      ...pair,
+      'teammateIds': [
+        for (final teammate in teammates) teammate['playerId'],
+      ],
+      'teammateNames': [
+        for (final teammate in teammates) teammate['name'],
+      ],
+      'teammateUsernames': [
+        for (final teammate in teammates) teammate['username'],
+      ],
+    };
   }
 
   String _pairId(List<MatchPlayer> players) {

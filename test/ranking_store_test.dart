@@ -7,7 +7,7 @@ import 'package:zapiti_server/match_state.dart';
 import 'package:zapiti_server/ranking_store.dart';
 
 void main() {
-  test('RankingStore recupera perfil por PIN', () {
+  test('RankingStore recupera perfil por usuario y contrasena', () {
     final tempDir = Directory.systemTemp.createTempSync('zapiti_profile_test');
     addTearDown(() => tempDir.deleteSync(recursive: true));
     final dbPath = '${tempDir.path}/ranking.sqlite';
@@ -15,15 +15,20 @@ void main() {
 
     store.upsertPlayerProfile(
       playerId: 'juan_profile',
+      username: 'juan',
       name: 'Juan',
-      pin: '123456',
+      password: 'secreto123',
       teamName: 'Los Bravos',
     );
 
-    final profile = store.recoverPlayerProfile(pin: '123456');
+    final profile = store.recoverPlayerProfile(
+      username: 'juan',
+      password: 'secreto123',
+    );
 
     expect(profile, isNotNull);
     expect(profile!['playerId'], 'juan_profile');
+    expect(profile['username'], 'juan');
     expect(profile['name'], 'Juan');
     expect(profile['pin'], isNull);
     expect(profile['sessionToken'], isA<String>());
@@ -58,11 +63,12 @@ void main() {
 
     final created = store.upsertPlayerProfile(
       playerId: 'juan_profile',
+      username: 'juan',
       name: 'Juan',
-      pin: '123456',
+      password: 'secreto123',
       teamName: 'Los Bravos',
     );
-    final token = created['sessionToken'] as String;
+    final token = created!['sessionToken'] as String;
 
     final updated = store.updatePlayerProfileWithSession(
       playerId: 'juan_profile',
@@ -84,6 +90,83 @@ void main() {
     expect(rejected, isNull);
     expect(player['name'], 'Juan Fran');
     expect(player['sessionToken'], isNull);
+  });
+
+  test('RankingStore rechaza usuario existente con otra contrasena', () {
+    final tempDir = Directory.systemTemp.createTempSync('zapiti_user_test');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    final store = RankingStore(path: '${tempDir.path}/ranking.sqlite');
+    addTearDown(store.close);
+
+    store.upsertPlayerProfile(
+      playerId: 'juan_profile',
+      username: 'juan',
+      name: 'Juan',
+      password: 'secreto123',
+    );
+
+    final rejected = store.upsertPlayerProfile(
+      playerId: 'otro_profile',
+      username: 'juan',
+      name: 'Otro',
+      password: 'otraClave',
+    );
+
+    expect(rejected, isNull);
+  });
+
+  test('RankingStore gestiona equipos del jugador', () {
+    final tempDir = Directory.systemTemp.createTempSync('zapiti_team_test');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    final store = RankingStore(path: '${tempDir.path}/ranking.sqlite');
+    addTearDown(store.close);
+
+    final juan = store.upsertPlayerProfile(
+      playerId: 'juan_profile',
+      username: 'juan',
+      name: 'Juan',
+      password: 'secreto123',
+    );
+    store.upsertPlayerProfile(
+      playerId: 'ana_profile',
+      username: 'ana',
+      name: 'Ana',
+      password: 'secreto456',
+    );
+    final token = juan!['sessionToken'] as String;
+
+    final created = store.createTeamForPlayer(
+      playerId: 'juan_profile',
+      sessionToken: token,
+      teammateUsername: 'ana',
+      teamName: 'Los Bravos',
+    );
+    final renamed = store.updateTeamName(
+      playerId: 'juan_profile',
+      sessionToken: token,
+      pairId: created!['pairId'] as String,
+      teamName: 'Los Finos',
+    );
+    final teams = store.teamsForPlayer(
+      playerId: 'juan_profile',
+      sessionToken: token,
+    );
+    final archived = store.archiveTeam(
+      playerId: 'juan_profile',
+      sessionToken: token,
+      pairId: created['pairId'] as String,
+    );
+    final activeTeams = store.teamsForPlayer(
+      playerId: 'juan_profile',
+      sessionToken: token,
+    );
+
+    expect(created['teamName'], 'Los Bravos');
+    expect(created['teammateNames'], ['Ana']);
+    expect(renamed!['teamName'], 'Los Finos');
+    expect(teams.single['teamName'], 'Los Finos');
+    expect(archived!['archivedAt'], isNot(0));
+    expect(activeTeams, isEmpty);
   });
 
   test('RankingStore importa JSON antiguo y hashea PIN en claro', () {
@@ -108,7 +191,10 @@ void main() {
     final dbPath = '${tempDir.path}/ranking.sqlite';
     final store = RankingStore(path: dbPath, legacyJsonPath: legacyFile.path);
 
-    final profile = store.recoverPlayerProfile(pin: '4444');
+    final profile = store.recoverPlayerProfile(
+      username: 'legacy',
+      password: '4444',
+    );
 
     expect(profile, isNotNull);
     expect(profile!['playerId'], 'legacy_profile');
@@ -130,14 +216,16 @@ void main() {
     final store = RankingStore(path: '${tempDir.path}/ranking.sqlite');
     store.upsertPlayerProfile(
       playerId: 'juan_profile',
+      username: 'juan',
       name: 'Juan',
-      pin: '1111',
+      password: 'secreto123',
       teamName: 'Los Bravos',
     );
     store.upsertPlayerProfile(
       playerId: 'ana_profile',
+      username: 'ana',
       name: 'Ana',
-      pin: '2222',
+      password: 'secreto456',
       teamName: 'Los Bravos',
     );
     final match = MatchState.start(

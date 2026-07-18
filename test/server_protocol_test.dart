@@ -179,19 +179,44 @@ void main() {
       expect(decoded.payload!['pairs'], isA<List<dynamic>>());
     });
 
+    test('encode and decode teams message', () {
+      final message = MultiplayerMessage(
+        type: MultiplayerMessageType.teams,
+        playerId: 'player_1',
+        payload: {
+          'teams': [
+            {
+              'pairId': 'player_1+player_2',
+              'teamName': 'Los Bravos',
+              'teammateNames': ['Ana'],
+            },
+          ],
+        },
+      );
+
+      final decoded = MultiplayerMessage.decode(message.encode());
+      expect(decoded.type, MultiplayerMessageType.teams);
+      expect(decoded.payload!['teams'], isA<List<dynamic>>());
+    });
+
     test('encode and decode profile messages', () {
       final update = MultiplayerMessage(
         type: MultiplayerMessageType.updateProfile,
         playerId: 'player_1',
-        payload: {'name': 'Juan', 'pin': '123456'},
+        payload: {
+          'username': 'juan',
+          'name': 'Juan',
+          'password': 'secreto123',
+        },
       );
       final profile = MultiplayerMessage(
         type: MultiplayerMessageType.profile,
         playerId: 'player_1',
         payload: {
           'playerId': 'player_1',
+          'username': 'juan',
           'name': 'Juan',
-          'pin': '123456',
+          'sessionToken': 'session_123',
           'teamName': 'Los Bravos',
         },
       );

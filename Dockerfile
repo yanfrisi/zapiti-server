@@ -1,26 +1,27 @@
-# Etapa de compilación
+# ---------- BUILD ----------
 FROM dart:stable AS build
 
 WORKDIR /app
 
-# Descargar dependencias primero para aprovechar la caché
 COPY pubspec.* ./
 RUN dart pub get
 
-# Copiar el código y compilar el servidor
 COPY . .
-RUN dart pub get --offline
-RUN dart compile exe bin/zapiti_server.dart -o /app/server
 
-# Imagen mínima de ejecución
-FROM scratch
+RUN dart compile exe bin/zapiti_server.dart -o /app/zapiti_server
 
-# Librerías necesarias para ejecutar el binario Dart compilado
-COPY --from=build /runtime/ /
 
-# Ejecutable del servidor
-COPY --from=build /app/server /app/server
+# ---------- RUNTIME ----------
+FROM debian:bookworm-slim
 
-EXPOSE 8080
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libsqlite3-dev \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-ENTRYPOINT ["/app/server"]
+WORKDIR /app
+
+COPY --from=build /app/zapiti_server /app/zapiti_server
+
+CMD ["/app/zapiti_server"]

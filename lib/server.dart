@@ -49,13 +49,6 @@ class ZapitiServer {
     return trimmed;
   }
 
-  String? _sanitizePin(String? rawPin) {
-    if (rawPin == null) return null;
-    final trimmed = rawPin.trim();
-    if (!RegExp(r'^\d{4,8}$').hasMatch(trimmed)) return null;
-    return trimmed;
-  }
-
   String? _sanitizeSessionToken(String? rawToken) {
     if (rawToken == null) return null;
     final trimmed = rawToken.trim();
@@ -64,10 +57,33 @@ class ZapitiServer {
     return trimmed;
   }
 
+  String? _sanitizeUsername(String? rawUsername) {
+    if (rawUsername == null) return null;
+    final trimmed = rawUsername.trim().toLowerCase();
+    if (trimmed.length < 3 || trimmed.length > 24) return null;
+    if (!RegExp(r'^[a-z0-9_.-]+$').hasMatch(trimmed)) return null;
+    return trimmed;
+  }
+
+  String? _sanitizePassword(String? rawPassword) {
+    if (rawPassword == null) return null;
+    final trimmed = rawPassword.trim();
+    if (trimmed.length < 6 || trimmed.length > 72) return null;
+    return trimmed;
+  }
+
   String _sanitizeTeamName(String? rawTeamName) {
     final normalized = rawTeamName?.trim().replaceAll(RegExp(r'\s+'), ' ') ?? '';
     if (normalized.length <= 22) return normalized;
     return normalized.substring(0, 22).trimRight();
+  }
+
+  String? _sanitizePairId(String? rawPairId) {
+    if (rawPairId == null) return null;
+    final trimmed = rawPairId.trim();
+    if (trimmed.isEmpty || trimmed.length > 180) return null;
+    if (!RegExp(r'^[A-Za-z0-9_\-+]+$').hasMatch(trimmed)) return null;
+    return trimmed;
   }
 
   /// Crear handler de WebSocket
@@ -125,6 +141,18 @@ class ZapitiServer {
         case MultiplayerMessageType.recoverProfile:
           _handleRecoverProfile(connection, message);
           break;
+        case MultiplayerMessageType.listTeams:
+          _handleListTeams(connection, message);
+          break;
+        case MultiplayerMessageType.createTeam:
+          _handleCreateTeam(connection, message);
+          break;
+        case MultiplayerMessageType.updateTeam:
+          _handleUpdateTeam(connection, message);
+          break;
+        case MultiplayerMessageType.archiveTeam:
+          _handleArchiveTeam(connection, message);
+          break;
         case MultiplayerMessageType.getRanking:
           _handleGetRanking(connection);
           break;
@@ -171,7 +199,10 @@ class ZapitiServer {
     }
 
     final preferredCharacterId = payload['characterId'] as String?;
-    final pin = _sanitizePin(payload['pin']?.toString());
+    final username = _sanitizeUsername(payload['username']?.toString());
+    final password = _sanitizePassword(
+      (payload['password'] ?? payload['pin'])?.toString(),
+    );
     final sessionToken =
         _sanitizeSessionToken(payload['sessionToken']?.toString());
     final teamName = _sanitizeTeamName(payload['teamName']?.toString());
@@ -184,9 +215,10 @@ class ZapitiServer {
       if (!_syncProfileForRoom(
         connection,
         playerId: playerId,
+        username: username,
         playerName: playerName,
         teamName: teamName,
-        pin: pin,
+        password: password,
         sessionToken: sessionToken,
       )) {
         return;
@@ -238,7 +270,10 @@ class ZapitiServer {
     }
 
     final preferredCharacterId = payload['characterId'] as String?;
-    final pin = _sanitizePin(payload['pin']?.toString());
+    final username = _sanitizeUsername(payload['username']?.toString());
+    final password = _sanitizePassword(
+      (payload['password'] ?? payload['pin'])?.toString(),
+    );
     final sessionToken =
         _sanitizeSessionToken(payload['sessionToken']?.toString());
     final teamName = _sanitizeTeamName(payload['teamName']?.toString());
@@ -250,9 +285,10 @@ class ZapitiServer {
       if (!_syncProfileForRoom(
         connection,
         playerId: requestedPlayerId,
+        username: username,
         playerName: playerName,
         teamName: teamName,
-        pin: pin,
+        password: password,
         sessionToken: sessionToken,
       )) {
         return;
@@ -317,7 +353,10 @@ class ZapitiServer {
     }
 
     final name = Room.sanitizePlayerName(payload['name']);
-    final pin = _sanitizePin(payload['pin']?.toString());
+    final username = _sanitizeUsername(payload['username']?.toString());
+    final password = _sanitizePassword(
+      (payload['password'] ?? payload['pin'])?.toString(),
+    );
     final sessionToken =
         _sanitizeSessionToken(payload['sessionToken']?.toString());
     final teamName = _sanitizeTeamName(payload['teamName']?.toString());
@@ -326,11 +365,12 @@ class ZapitiServer {
       return;
     }
 
-    final profile = pin != null
+    final profile = password != null && username != null
         ? rankingStore.upsertPlayerProfile(
             playerId: playerId,
+            username: username,
             name: name,
-            pin: pin,
+            password: password,
             teamName: teamName,
           )
         : sessionToken == null
@@ -355,9 +395,10 @@ class ZapitiServer {
   bool _syncProfileForRoom(
     ClientConnection connection, {
     required String playerId,
+    required String? username,
     required String playerName,
     required String teamName,
-    required String? pin,
+    required String? password,
     required String? sessionToken,
   }) {
     if (sessionToken != null) {
@@ -374,13 +415,18 @@ class ZapitiServer {
       return true;
     }
 
-    if (pin != null) {
-      rankingStore.upsertPlayerProfile(
+    if (username != null && password != null) {
+      final profile = rankingStore.upsertPlayerProfile(
         playerId: playerId,
+        username: username,
         name: playerName,
-        pin: pin,
+        password: password,
         teamName: teamName,
       );
+      if (profile == null) {
+        connection.sendError('auth_failed', 'Invalid username or password');
+        return false;
+      }
     }
     return true;
   }
@@ -390,13 +436,19 @@ class ZapitiServer {
     MultiplayerMessage message,
   ) {
     final payload = message.payload;
-    final pin = _sanitizePin(payload?['pin']?.toString());
-    if (pin == null) {
-      connection.sendError('invalid_payload', 'Invalid recovery pin');
+    final username = _sanitizeUsername(payload?['username']?.toString());
+    final password = _sanitizePassword(
+      (payload?['password'] ?? payload?['pin'])?.toString(),
+    );
+    if (username == null || password == null) {
+      connection.sendError('invalid_payload', 'Invalid login payload');
       return;
     }
 
-    final profile = rankingStore.recoverPlayerProfile(pin: pin);
+    final profile = rankingStore.recoverPlayerProfile(
+      username: username,
+      password: password,
+    );
     if (profile == null) {
       connection.sendError('profile_not_found', 'Profile not found');
       return;
@@ -406,6 +458,132 @@ class ZapitiServer {
       type: MultiplayerMessageType.profile,
       playerId: profile['playerId']?.toString(),
       payload: profile,
+    ));
+  }
+
+  void _handleListTeams(
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) {
+    final playerId = _sanitizePlayerId(message.playerId);
+    final sessionToken =
+        _sanitizeSessionToken(message.payload?['sessionToken']?.toString());
+    if (playerId == null || sessionToken == null) {
+      connection.sendError('auth_failed', 'Invalid profile session');
+      return;
+    }
+
+    final teams = rankingStore.teamsForPlayer(
+      playerId: playerId,
+      sessionToken: sessionToken,
+    );
+    connection.send(MultiplayerMessage(
+      type: MultiplayerMessageType.teams,
+      playerId: playerId,
+      payload: {'teams': teams},
+    ));
+  }
+
+  void _handleCreateTeam(
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) {
+    final payload = message.payload;
+    final playerId = _sanitizePlayerId(message.playerId);
+    final sessionToken =
+        _sanitizeSessionToken(payload?['sessionToken']?.toString());
+    final teammateUsername =
+        _sanitizeUsername(payload?['teammateUsername']?.toString());
+    final teamName = _sanitizeTeamName(payload?['teamName']?.toString());
+    if (playerId == null || sessionToken == null || teammateUsername == null) {
+      connection.sendError('invalid_payload', 'Invalid team payload');
+      return;
+    }
+
+    final team = rankingStore.createTeamForPlayer(
+      playerId: playerId,
+      sessionToken: sessionToken,
+      teammateUsername: teammateUsername,
+      teamName: teamName,
+    );
+    if (team == null) {
+      connection.sendError('team_not_found', 'Could not create team');
+      return;
+    }
+    _sendTeamsForPlayer(connection, playerId, sessionToken);
+  }
+
+  void _handleUpdateTeam(
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) {
+    final payload = message.payload;
+    final playerId = _sanitizePlayerId(message.playerId);
+    final sessionToken =
+        _sanitizeSessionToken(payload?['sessionToken']?.toString());
+    final pairId = _sanitizePairId(payload?['pairId']?.toString());
+    final teamName = _sanitizeTeamName(payload?['teamName']?.toString());
+    if (playerId == null ||
+        sessionToken == null ||
+        pairId == null ||
+        teamName.isEmpty) {
+      connection.sendError('invalid_payload', 'Invalid team payload');
+      return;
+    }
+
+    final team = rankingStore.updateTeamName(
+      playerId: playerId,
+      sessionToken: sessionToken,
+      pairId: pairId,
+      teamName: teamName,
+    );
+    if (team == null) {
+      connection.sendError('team_not_found', 'Team not found');
+      return;
+    }
+    _sendTeamsForPlayer(connection, playerId, sessionToken);
+  }
+
+  void _handleArchiveTeam(
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) {
+    final payload = message.payload;
+    final playerId = _sanitizePlayerId(message.playerId);
+    final sessionToken =
+        _sanitizeSessionToken(payload?['sessionToken']?.toString());
+    final pairId = _sanitizePairId(payload?['pairId']?.toString());
+    if (playerId == null || sessionToken == null || pairId == null) {
+      connection.sendError('invalid_payload', 'Invalid team payload');
+      return;
+    }
+
+    final team = rankingStore.archiveTeam(
+      playerId: playerId,
+      sessionToken: sessionToken,
+      pairId: pairId,
+    );
+    if (team == null) {
+      connection.sendError('team_not_found', 'Team not found');
+      return;
+    }
+    _sendTeamsForPlayer(connection, playerId, sessionToken);
+  }
+
+  void _sendTeamsForPlayer(
+    ClientConnection connection,
+    String playerId,
+    String sessionToken,
+  ) {
+    connection.send(MultiplayerMessage(
+      type: MultiplayerMessageType.teams,
+      playerId: playerId,
+      payload: {
+        'teams': rankingStore.teamsForPlayer(
+          playerId: playerId,
+          sessionToken: sessionToken,
+        ),
+      },
     ));
   }
 
