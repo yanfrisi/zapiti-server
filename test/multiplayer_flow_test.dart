@@ -147,6 +147,112 @@ void main() {
     );
   });
 
+  test('four player room rejects teams that do not match seat partners',
+      () async {
+    final tempDir = Directory.systemTemp.createTempSync('zapiti_flow_test');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+
+    final rankingStore = RankingStore(path: '${tempDir.path}/ranking.sqlite');
+    final server = ZapitiServer(
+      customHost: '127.0.0.1',
+      customPort: 0,
+      customRankingStore: rankingStore,
+    );
+    await server.start();
+    addTearDown(server.stop);
+
+    final clients = [
+      await _TestClient.connect(server.port),
+      await _TestClient.connect(server.port),
+      await _TestClient.connect(server.port),
+      await _TestClient.connect(server.port),
+    ];
+    for (final client in clients) {
+      addTearDown(client.close);
+    }
+
+    final profiles = <Map<String, dynamic>>[];
+    for (var index = 0; index < clients.length; index++) {
+      clients[index].send(MultiplayerMessage(
+        type: MultiplayerMessageType.updateProfile,
+        playerId: 'p$index',
+        payload: {
+          'username': 'seat$index',
+          'name': 'Seat $index',
+          'password': 'secret$index',
+          'teamName': '',
+        },
+      ));
+      profiles.add(
+        await clients[index].expectType(MultiplayerMessageType.profile),
+      );
+    }
+
+    clients[0].send(MultiplayerMessage(
+      type: MultiplayerMessageType.createRoom,
+      playerId: 'p0',
+      payload: {
+        'username': 'seat0',
+        'name': 'Seat 0',
+        'sessionToken': profiles[0]['sessionToken'],
+        'characterId': 'p1',
+      },
+    ));
+    final createdRoom = await clients[0].expectType(
+      MultiplayerMessageType.roomSnapshot,
+    );
+    final roomId = createdRoom['roomId'] as String;
+
+    for (var index = 1; index < clients.length; index++) {
+      clients[index].send(MultiplayerMessage(
+        type: MultiplayerMessageType.joinRoom,
+        roomId: roomId,
+        playerId: 'p$index',
+        payload: {
+          'username': 'seat$index',
+          'name': 'Seat $index',
+          'sessionToken': profiles[index]['sessionToken'],
+          'characterId': 'p1',
+        },
+      ));
+    }
+
+    await Future.wait([
+      for (final client in clients) client.expectRoomWithSeats(4),
+    ]);
+
+    final invalidPair = await _createTeam(
+      clients[0],
+      playerId: 'p0',
+      sessionToken: profiles[0]['sessionToken'] as String,
+      teammateUsername: 'seat1',
+      teamName: 'Invalid 0-1',
+    );
+    await _selectTeamExpectError(
+      clients[0],
+      roomId: roomId,
+      playerId: 'p0',
+      sessionToken: profiles[0]['sessionToken'] as String,
+      pairId: invalidPair,
+      code: 'invalid_team_for_room',
+    );
+
+    final validPair = await _createTeam(
+      clients[0],
+      playerId: 'p0',
+      sessionToken: profiles[0]['sessionToken'] as String,
+      teammateUsername: 'seat2',
+      teamName: 'Valid 0-2',
+    );
+    await _selectTeam(
+      clients[0],
+      roomId: roomId,
+      playerId: 'p0',
+      sessionToken: profiles[0]['sessionToken'] as String,
+      pairId: validPair,
+    );
+  });
+
   test('four simulated human players can play a multiplayer match', () async {
     final setup = await _createFourPlayerStartedMatch();
     addTearDown(setup.close);
@@ -274,6 +380,89 @@ void main() {
     ];
     expect(bots, hasLength(2));
     expect(bots.map((bot) => bot['aiDifficulty']).toSet(), {4});
+  });
+
+  test('two players can ready up without creating a manual team', () async {
+    final tempDir = Directory.systemTemp.createTempSync('zapiti_flow_test');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+
+    final rankingStore = RankingStore(path: '${tempDir.path}/ranking.sqlite');
+    final server = ZapitiServer(
+      customHost: '127.0.0.1',
+      customPort: 0,
+      customRankingStore: rankingStore,
+    );
+    await server.start();
+    addTearDown(server.stop);
+
+    final clients = [
+      await _TestClient.connect(server.port),
+      await _TestClient.connect(server.port),
+    ];
+    for (final client in clients) {
+      addTearDown(client.close);
+    }
+
+    final profiles = <Map<String, dynamic>>[];
+    for (var index = 0; index < clients.length; index++) {
+      clients[index].send(MultiplayerMessage(
+        type: MultiplayerMessageType.updateProfile,
+        playerId: 'quick$index',
+        payload: {
+          'username': 'quick$index',
+          'name': 'Quick $index',
+          'password': 'secret$index',
+          'teamName': '',
+        },
+      ));
+      profiles.add(
+        await clients[index].expectType(MultiplayerMessageType.profile),
+      );
+    }
+
+    clients[0].send(MultiplayerMessage(
+      type: MultiplayerMessageType.createRoom,
+      playerId: 'quick0',
+      payload: {
+        'username': 'quick0',
+        'name': 'Quick 0',
+        'sessionToken': profiles[0]['sessionToken'],
+      },
+    ));
+    final createdRoom = await clients[0].expectType(
+      MultiplayerMessageType.roomSnapshot,
+    );
+    final roomId = createdRoom['roomId'] as String;
+
+    clients[1].send(MultiplayerMessage(
+      type: MultiplayerMessageType.joinRoom,
+      roomId: roomId,
+      playerId: 'quick1',
+      payload: {
+        'username': 'quick1',
+        'name': 'Quick 1',
+        'sessionToken': profiles[1]['sessionToken'],
+      },
+    ));
+    await Future.wait([
+      for (final client in clients) client.expectRoomWithSeats(2),
+    ]);
+
+    for (var index = 0; index < clients.length; index++) {
+      clients[index].send(MultiplayerMessage(
+        type: MultiplayerMessageType.playerReady,
+        roomId: roomId,
+        playerId: 'quick$index',
+        payload: {'ready': true},
+      ));
+    }
+
+    final startGame = await clients[0].expectType(
+      MultiplayerMessageType.startGame,
+      timeout: const Duration(seconds: 5),
+    );
+    final players = startGame['players'] as List<dynamic>;
+    expect(players, hasLength(4));
   });
 }
 
@@ -571,6 +760,27 @@ Future<void> _selectTeam(
     },
   ));
   await client.expectRoomSeat(playerId, pairId);
+}
+
+Future<void> _selectTeamExpectError(
+  _TestClient client, {
+  required String roomId,
+  required String playerId,
+  required String sessionToken,
+  required String pairId,
+  required String code,
+}) async {
+  client.send(MultiplayerMessage(
+    type: MultiplayerMessageType.selectTeam,
+    roomId: roomId,
+    playerId: playerId,
+    payload: {
+      'sessionToken': sessionToken,
+      'pairId': pairId,
+    },
+  ));
+  final error = await client.expectType(MultiplayerMessageType.error);
+  expect(error['code'], code);
 }
 
 class _TestClient {

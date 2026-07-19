@@ -660,6 +660,13 @@ class ZapitiServer {
       pairId: pairId,
     );
     if (team == null) return;
+    if (!_teamMatchesRoomTeammate(room, playerId, team)) {
+      connection.sendError(
+        'invalid_team_for_room',
+        'Team does not match the player position in this room',
+      );
+      return;
+    }
 
     room.setPlayerTeam(
       playerId,
@@ -689,6 +696,34 @@ class ZapitiServer {
       return null;
     }
     return team;
+  }
+
+  bool _teamMatchesRoomTeammate(
+    Room room,
+    String playerId,
+    Map<String, dynamic> team,
+  ) {
+    final localSeat = room.seats.cast<MultiplayerSeat?>().firstWhere(
+          (seat) => seat?.playerId == playerId,
+          orElse: () => null,
+        );
+    if (localSeat == null) return false;
+
+    final teammateSeat = room.seats.cast<MultiplayerSeat?>().firstWhere(
+      (seat) {
+        if (seat == null || seat.playerId == playerId) return false;
+        if (room.seats.length == 2) return true;
+        return seat.teamId == localSeat.teamId;
+      },
+      orElse: () => null,
+    );
+    if (teammateSeat == null) return false;
+
+    final teammateIds = team['teammateIds'];
+    if (teammateIds is! List) return false;
+    return teammateIds.map((entry) => entry.toString()).contains(
+          teammateSeat.playerId,
+        );
   }
 
   void _sendTeamsForPlayer(
@@ -802,10 +837,10 @@ class ZapitiServer {
           orElse: () => null,
         );
     if (localSeat == null) return false;
+    if (room.seats.length < Room.maxSeats) return false;
     final hasHumanTeammate = room.seats.any((seat) {
       if (seat.playerId == playerId) return false;
       if ((seat.username ?? '').trim().isEmpty) return false;
-      if (room.seats.length == 2) return true;
       return seat.teamId == localSeat.teamId;
     });
     return hasHumanTeammate && (localSeat.pairId ?? '').trim().isEmpty;
