@@ -40,7 +40,7 @@ class ZapitiServer {
     host = customHost ?? '0.0.0.0';
   }
 
-  /// Obtener un ID único para conexión
+  /// Obtener un ID Ãºnico para conexiÃ³n
   String _getConnectionId() {
     return 'conn_${DateTime.now().millisecondsSinceEpoch}_${_connectionCounter++}';
   }
@@ -288,6 +288,7 @@ class ZapitiServer {
           _handleGameMessage(connection, message);
           break;
         case MultiplayerMessageType.playCard:
+        case MultiplayerMessageType.passHand:
         case MultiplayerMessageType.callTruco:
         case MultiplayerMessageType.acceptTruco:
         case MultiplayerMessageType.passTruco:
@@ -375,6 +376,7 @@ class ZapitiServer {
         username: username,
         pairId: selectedTeam?['pairId']?.toString(),
         teamName: selectedTeam?['teamName']?.toString() ?? teamName,
+        allowPassHand: payload['allowPassHand'] == true,
       );
       if (preferredCharacterId != null) {
         try {
@@ -558,6 +560,7 @@ class ZapitiServer {
           username: username,
           pairId: selectedTeam?['pairId']?.toString(),
           teamName: selectedTeam?['teamName']?.toString() ?? teamName,
+          allowPassHand: payload['allowPassHand'] == true,
         );
         if (room == null) {
           connection.sendError('room_not_found', 'Room not found');
@@ -1096,7 +1099,7 @@ class ZapitiServer {
     // Enviar snapshot
     _broadcastRoomSnapshot(roomId);
 
-    // Si todos están listos y hay al menos 2 jugadores, iniciar juego
+    // Si todos estÃ¡n listos y hay al menos 2 jugadores, iniciar juego
     if (room.match == null && room.areAllReady() && room.seats.length >= 2) {
       _log('match_start_conditions_met', {
         'roomId': roomId,
@@ -1359,6 +1362,9 @@ class ZapitiServer {
       case MultiplayerMessageType.playCard:
         _handlePlayCard(connection, room, match, message);
         break;
+      case MultiplayerMessageType.passHand:
+        _handlePassHand(connection, room, match, message);
+        break;
       case MultiplayerMessageType.chooseAlVerDecision:
         _handleChooseAlVerDecision(connection, room, match, message);
         break;
@@ -1402,6 +1408,7 @@ class ZapitiServer {
       createdAt: room.createdAt,
       seed: DateTime.now().millisecondsSinceEpoch,
       players: _buildPlayersForRoom(room),
+      allowPassHand: room.allowPassHand,
     );
     room.startMatch(match);
     _log('match_started', {
@@ -1588,6 +1595,38 @@ class ZapitiServer {
         roomId: room.roomId,
         playerId: playerId,
         payload: {'card': card.toJson()},
+      ),
+      excludeConnection: connection.connectionId,
+    );
+  }
+
+  void _handlePassHand(
+    ClientConnection connection,
+    Room room,
+    MatchState match,
+    MultiplayerMessage message,
+  ) {
+    final playerId = message.playerId;
+    final toPlayerId = message.payload?['toPlayerId']?.toString();
+    if (playerId == null || toPlayerId == null) {
+      connection.sendError('invalid_payload', 'Missing pass hand target');
+      return;
+    }
+
+    try {
+      match.passHand(fromPlayerId: playerId, toPlayerId: toPlayerId);
+    } catch (e) {
+      connection.sendError('invalid_move', 'Cannot pass hand: $e');
+      return;
+    }
+
+    _broadcastToRoom(
+      room.roomId,
+      MultiplayerMessage(
+        type: MultiplayerMessageType.passHand,
+        roomId: room.roomId,
+        playerId: playerId,
+        payload: {'toPlayerId': toPlayerId},
       ),
       excludeConnection: connection.connectionId,
     );
@@ -1903,7 +1942,8 @@ class ZapitiServer {
       return;
     }
 
-    final delayMillis = max(0, deadline - DateTime.now().millisecondsSinceEpoch);
+    final delayMillis =
+        max(0, deadline - DateTime.now().millisecondsSinceEpoch);
     _turnTimeoutTimers[room.roomId] = Timer(
       Duration(milliseconds: delayMillis),
       () => _handleTurnTimeout(room.roomId, deadline),
@@ -1965,7 +2005,7 @@ class ZapitiServer {
     _recordedMatchIds.add(matchId);
   }
 
-  /// Manejar desconexión
+  /// Manejar desconexiÃ³n
   void _handleDisconnect(String connectionId) {
     final connection = _connections[connectionId];
     _log('connection_close', {

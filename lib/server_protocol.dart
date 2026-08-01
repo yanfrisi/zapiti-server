@@ -27,6 +27,7 @@ enum MultiplayerMessageType {
   restartGame('restart_game'),
   chooseAlVerDecision('choose_al_ver_decision'),
   playCard('play_card'),
+  passHand('pass_hand'),
   callTruco('call_truco'),
   acceptTruco('accept_truco'),
   passTruco('pass_truco'),
@@ -205,12 +206,14 @@ class MultiplayerRoomSnapshot {
   final List<MultiplayerSeat> seats;
   final String phase;
   final int createdAt;
+  final Map<String, dynamic>? match;
 
   MultiplayerRoomSnapshot({
     required this.roomId,
     required this.seats,
     required this.phase,
     required this.createdAt,
+    this.match,
   });
 
   /// Copiar con cambios
@@ -219,12 +222,14 @@ class MultiplayerRoomSnapshot {
     List<MultiplayerSeat>? seats,
     String? phase,
     int? createdAt,
+    Map<String, dynamic>? match,
   }) {
     return MultiplayerRoomSnapshot(
       roomId: roomId ?? this.roomId,
       seats: seats ?? this.seats,
       phase: phase ?? this.phase,
       createdAt: createdAt ?? this.createdAt,
+      match: match ?? this.match,
     );
   }
 
@@ -234,6 +239,7 @@ class MultiplayerRoomSnapshot {
         'seats': seats.map((s) => s.toJson()).toList(),
         'phase': phase,
         'createdAt': createdAt,
+        if (match != null) 'match': match,
       };
 
   /// Decodificar desde JSON
@@ -251,6 +257,7 @@ class MultiplayerRoomSnapshot {
       seats: seats,
       phase: json['phase'] as String,
       createdAt: json['createdAt'] as int,
+      match: json['match'] as Map<String, dynamic>?,
     );
   }
 }

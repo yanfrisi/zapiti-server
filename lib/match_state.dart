@@ -343,6 +343,30 @@ enum AlVerState {
   conceded,
 }
 
+class PassedHandState {
+  final String originalLeaderId;
+  final String? passedToPlayerId;
+
+  const PassedHandState({
+    required this.originalLeaderId,
+    this.passedToPlayerId,
+  });
+
+  bool get hasPassed => passedToPlayerId != null;
+
+  PassedHandState passTo(String playerId) {
+    return PassedHandState(
+      originalLeaderId: originalLeaderId,
+      passedToPlayerId: playerId,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'originalLeaderId': originalLeaderId,
+        if (passedToPlayerId != null) 'passedToPlayerId': passedToPlayerId,
+      };
+}
+
 class MatchState {
   static const defaultTargetScore = 30;
   static const turnTimeoutSeconds = 30;
@@ -352,6 +376,7 @@ class MatchState {
   final int targetScore;
   final int seed;
   final List<MatchPlayer> players;
+  final bool allowPassHand;
   int handSequence = 0;
   int handSeed;
   final Map<String, List<SpanishCard>> hands;
@@ -364,6 +389,7 @@ class MatchState {
   int turnIndex = 0;
   int leadIndex = 0;
   int nextLeadIndex = 0;
+  late PassedHandState passedHandState;
   int handValue = 1;
   int? pendingTrucoValue;
   int? trucoCallerTeamId;
@@ -383,6 +409,7 @@ class MatchState {
     required this.targetScore,
     required this.seed,
     required this.players,
+    required this.allowPassHand,
     required this.handSeed,
     required this.hands,
   });
@@ -392,6 +419,7 @@ class MatchState {
     required int createdAt,
     required int seed,
     required List<MatchPlayer> players,
+    bool allowPassHand = false,
     int targetScore = defaultTargetScore,
   }) {
     final deck = ZapitiDeck.shuffled(random: Random(seed));
@@ -406,11 +434,13 @@ class MatchState {
       targetScore: targetScore,
       seed: seed,
       players: players,
+      allowPassHand: allowPassHand,
       handSeed: seed,
       hands: dealtHands,
     );
     state.leadIndex = state.nextLeadIndex;
     state.turnIndex = state.leadIndex;
+    state._resetPassedHandState();
     state.status = state.currentPlayerId == state.humanPlayerIds.first
         ? 'Sales tu.'
         : 'Sale ${state.currentPlayer.name}.';
@@ -443,14 +473,50 @@ class MatchState {
       !isGameFinished &&
       pendingTrucoValue == null &&
       alVerState != AlVerState.awaitingDecision;
-  int? get alVerTeamId =>
-      alVerTeamIds.length == 1 ? alVerTeamIds.first : null;
+  int? get alVerTeamId => alVerTeamIds.length == 1 ? alVerTeamIds.first : null;
   int get trucoResponseTeamId {
     final callerTeamId = trucoCallerTeamId;
     if (callerTeamId == null) {
       throw StateError('No truco caller.');
     }
     return callerTeamId == 1 ? 2 : 1;
+  }
+
+  bool canPassHand({
+    required String fromPlayerId,
+    required String toPlayerId,
+  }) {
+    if (!allowPassHand) return false;
+    if (handFinished || isRoundAwaitingContinue || isGameFinished) return false;
+    if (pendingTrucoValue != null) return false;
+    if (alVerState == AlVerState.awaitingDecision) return false;
+    if (roundHistory.isNotEmpty) return false;
+    if (playedCards.isNotEmpty) return false;
+    if (passedHandState.hasPassed) return false;
+    if (fromPlayerId != currentPlayer.playerId) return false;
+    if (fromPlayerId != passedHandState.originalLeaderId) return false;
+
+    final from = playerById(fromPlayerId);
+    final to = playerById(toPlayerId);
+    if (from.playerId == to.playerId || from.teamId != to.teamId) return false;
+    if ((hands[from.playerId] ?? const <SpanishCard>[]).isEmpty) return false;
+    if ((hands[to.playerId] ?? const <SpanishCard>[]).isEmpty) return false;
+    return true;
+  }
+
+  void passHand({
+    required String fromPlayerId,
+    required String toPlayerId,
+  }) {
+    if (!canPassHand(fromPlayerId: fromPlayerId, toPlayerId: toPlayerId)) {
+      throw StateError('Cannot pass hand in current state.');
+    }
+    final from = playerById(fromPlayerId);
+    final to = playerById(toPlayerId);
+    turnIndex = players.indexWhere((player) => player.playerId == to.playerId);
+    passedHandState = passedHandState.passTo(to.playerId);
+    status = '${from.name} pasa mano a ${to.name}. Sale ${to.name}.';
+    refreshTurnDeadline();
   }
 
   void playCard(String playerId, SpanishCard card) {
@@ -506,6 +572,7 @@ class MatchState {
     if (!isRoundAwaitingContinue) return;
     playedCards.clear();
     isRoundAwaitingContinue = false;
+    _resetPassedHandState();
     status = 'Turno de ${currentPlayer.name}.';
     refreshTurnDeadline();
   }
@@ -610,6 +677,7 @@ class MatchState {
     leadIndex = nextLeadIndex;
     nextLeadIndex = (nextLeadIndex + 1) % players.length;
     turnIndex = leadIndex;
+    _resetPassedHandState();
     _refreshAlVerState();
     phase = 'playing';
     status = currentPlayerId == humanPlayerIds.first
@@ -705,7 +773,8 @@ class MatchState {
     if (hand == null || hand.isEmpty) {
       throw StateError('Current player has no cards.');
     }
-    final card = player.isBot ? chooseBotCard(player) : _chooseTimeoutCard(player);
+    final card =
+        player.isBot ? chooseBotCard(player) : _chooseTimeoutCard(player);
     playCard(player.playerId, card);
     if (isAwaitingCardPlay) {
       refreshTurnDeadline(now: currentTime);
@@ -852,6 +921,8 @@ class MatchState {
         'currentPlayerId': currentPlayerId,
         'leadPlayerId': players[leadIndex].playerId,
         'nextLeadPlayerId': players[nextLeadIndex].playerId,
+        'allowPassHand': allowPassHand,
+        'passedHandState': passedHandState.toJson(),
         'handValue': handValue,
         'pendingTrucoValue': pendingTrucoValue,
         'trucoCallerTeamId': trucoCallerTeamId,
@@ -908,6 +979,7 @@ class MatchState {
       return;
     }
 
+    _resetPassedHandState();
     status =
         '${winner.player.name} gana con ${winner.card}. Ronda para Equipo $winningTeam.';
   }
@@ -924,9 +996,15 @@ class MatchState {
     }
 
     turnIndex = leadIndex;
+    _resetPassedHandState();
     status = roundNumber == 1
         ? 'Primera ronda empatada.'
         : 'Primera y segunda ronda empatadas.';
+  }
+
+  void _resetPassedHandState() {
+    passedHandState =
+        PassedHandState(originalLeaderId: players[leadIndex].playerId);
   }
 
   void _finishHandForTeam(int teamId, {int? points}) {
@@ -1024,7 +1102,8 @@ class MatchState {
 
     final strongest = strengths.last;
     final goodCards = strengths.where((strength) => strength >= 80).length;
-    final isWinningReparto = roundWins[teamId]! > roundWins[_opponentOf(teamId)]!;
+    final isWinningReparto =
+        roundWins[teamId]! > roundWins[_opponentOf(teamId)]!;
     if (strongest < 90 && goodCards < 2) return null;
     if (!isWinningReparto && pendingValue >= 6 && goodCards < 2) return null;
     if (teamScore < profile.threshold(pendingValue >= 6 ? 128 : 145)) {
@@ -1129,15 +1208,13 @@ class MatchState {
     if (score[2] == 29) {
       alVerTeamIds.add(2);
     }
-    alVerState = alVerTeamIds.isEmpty
-        ? AlVerState.none
-        : AlVerState.awaitingDecision;
+    alVerState =
+        alVerTeamIds.isEmpty ? AlVerState.none : AlVerState.awaitingDecision;
   }
 
   bool _shouldBotPlayAlVer(int teamId) {
-    final cards = hands[players
-        .firstWhere((player) => player.teamId == teamId)
-        .playerId];
+    final cards =
+        hands[players.firstWhere((player) => player.teamId == teamId).playerId];
     if (cards == null || cards.isEmpty) return false;
 
     final strengths = cards.map(ZapitiRules.strength).toList()..sort();

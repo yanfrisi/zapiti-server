@@ -77,6 +77,34 @@ void main() {
     });
   });
 
+  group('MatchState pasar mano', () {
+    test('permite pasar mano al companero al inicio de la mano', () {
+      final match = _makeMatch(allowPassHand: true);
+      match.startNewHand(fixedHands: _fixedHands());
+
+      match.passHand(fromPlayerId: 'p1', toPlayerId: 'p3');
+
+      expect(match.currentPlayerId, 'p3');
+      expect(match.passedHandState.originalLeaderId, 'p1');
+      expect(match.passedHandState.passedToPlayerId, 'p3');
+      expect(match.toPublicJson()['allowPassHand'], isTrue);
+      expect(
+        match.toPublicJson()['passedHandState'],
+        {'originalLeaderId': 'p1', 'passedToPlayerId': 'p3'},
+      );
+    });
+
+    test('bloquea pasar mano despues de jugar una carta', () {
+      final match = _makeMatch(allowPassHand: true);
+      match.startNewHand(fixedHands: _fixedHands());
+      match.playCard('p1', match.hands['p1']!.first);
+
+      expect(
+        () => match.passHand(fromPlayerId: 'p1', toPlayerId: 'p3'),
+        throwsStateError,
+      );
+    });
+  });
   group('MatchState turn timeout', () {
     test('juega automaticamente la carta mas baja al vencer el turno', () {
       final match = _makeMatch();
@@ -94,11 +122,12 @@ void main() {
   });
 }
 
-MatchState _makeMatch() {
+MatchState _makeMatch({bool allowPassHand = false}) {
   return MatchState.start(
     roomId: 'A7K2',
     createdAt: 1710000000000,
     seed: 42,
+    allowPassHand: allowPassHand,
     players: [
       const MatchPlayer(
         playerId: 'p1',

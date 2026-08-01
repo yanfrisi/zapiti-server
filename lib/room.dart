@@ -12,13 +12,15 @@ class Room {
   List<MultiplayerSeat> _seats = [];
   String _phase = 'lobby';
   MatchState? _match;
+  bool allowPassHand;
 
-  // Map de playerId -> clientConnectionId para saber a quién enviar mensajes
+  // Map de playerId -> clientConnectionId para saber a quiÃƒÂ©n enviar mensajes
   final Map<String, String> _playerToConnection = {};
 
   Room({
     required this.roomId,
     required this.createdAt,
+    this.allowPassHand = false,
   });
 
   String get phase => _phase;
@@ -214,7 +216,7 @@ class Room {
     );
   }
 
-  /// Verificar si todos los jugadores (al menos 2) están listos
+  /// Verificar si todos los jugadores (al menos 2) estÃƒÂ¡n listos
   bool areAllReady() {
     if (_seats.length < 2) return false;
     return _seats.every((s) => s.ready);
@@ -251,10 +253,12 @@ class Room {
       seats: List.from(_seats),
       phase: _phase,
       createdAt: createdAt,
+      match: _match?.toPublicJson() ??
+          (allowPassHand ? {'allowPassHand': allowPassHand} : null),
     );
   }
 
-  /// La sala está vacía
+  /// La sala estÃƒÂ¡ vacÃƒÂ­a
   bool isEmpty() => _seats.isEmpty;
 
   /// Validar que un jugador pertenece a la sala

@@ -150,6 +150,18 @@ void main() {
       expect(snapshot.seats[0].characterId, 'p4');
     });
 
+    test('encode and decode pass_hand message', () {
+      final message = MultiplayerMessage(
+        type: MultiplayerMessageType.passHand,
+        roomId: 'A7K2',
+        playerId: 'p1',
+        payload: {'toPlayerId': 'p3'},
+      );
+
+      final decoded = MultiplayerMessage.decode(message.encode());
+      expect(decoded.type, MultiplayerMessageType.passHand);
+      expect(decoded.payload!['toPlayerId'], 'p3');
+    });
     test('encode and decode select_character message', () {
       final message = MultiplayerMessage(
         type: MultiplayerMessageType.selectCharacter,

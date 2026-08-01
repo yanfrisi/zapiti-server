@@ -14,11 +14,16 @@ class RoomManager {
     String? username,
     String? pairId,
     String? teamName,
+    bool allowPassHand = false,
   }) {
     final roomId = _generateRoomCode();
     final createdAt = DateTime.now().millisecondsSinceEpoch;
 
-    final room = Room(roomId: roomId, createdAt: createdAt);
+    final room = Room(
+      roomId: roomId,
+      createdAt: createdAt,
+      allowPassHand: allowPassHand,
+    );
     room.addPlayer(
       playerId: playerId,
       name: playerName,
@@ -42,6 +47,7 @@ class RoomManager {
     String? username,
     String? pairId,
     String? teamName,
+    bool allowPassHand = false,
   }) {
     final room = _rooms[roomId];
     if (room == null) return null;
