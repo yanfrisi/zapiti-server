@@ -31,10 +31,7 @@ void main() {
       match.score[1] = 29;
       match.startNewHand(fixedHands: _fixedHands());
 
-      expect(
-        () => match.callTruco('p1', value: 1),
-        throwsStateError,
-      );
+      expect(() => match.callTruco('p1', value: 1), throwsStateError);
     });
 
     test('si el equipo al ver juega, la mano sigue', () {

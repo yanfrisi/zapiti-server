@@ -33,48 +33,54 @@ void main() {
 
     final profiles = <Map<String, dynamic>>[];
     for (var index = 0; index < clients.length; index++) {
-      clients[index].send(MultiplayerMessage(
-        type: MultiplayerMessageType.updateProfile,
-        playerId: 'p$index',
-        payload: {
-          'username': 'player$index',
-          'name': 'Player $index',
-          'password': 'secret$index',
-          'teamName': '',
-        },
-      ));
+      clients[index].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.updateProfile,
+          playerId: 'p$index',
+          payload: {
+            'username': 'player$index',
+            'name': 'Player $index',
+            'password': 'secret$index',
+            'teamName': '',
+          },
+        ),
+      );
       profiles.add(
         await clients[index].expectType(MultiplayerMessageType.profile),
       );
     }
 
-    clients[0].send(MultiplayerMessage(
-      type: MultiplayerMessageType.createRoom,
-      playerId: 'p0',
-      payload: {
-        'username': 'player0',
-        'name': 'Player 0',
-        'sessionToken': profiles[0]['sessionToken'],
-        'characterId': 'p1',
-      },
-    ));
+    clients[0].send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.createRoom,
+        playerId: 'p0',
+        payload: {
+          'username': 'player0',
+          'name': 'Player 0',
+          'sessionToken': profiles[0]['sessionToken'],
+          'characterId': 'p1',
+        },
+      ),
+    );
     final createdRoom = await clients[0].expectType(
       MultiplayerMessageType.roomSnapshot,
     );
     final roomId = createdRoom['roomId'] as String;
 
     for (var index = 1; index < clients.length; index++) {
-      clients[index].send(MultiplayerMessage(
-        type: MultiplayerMessageType.joinRoom,
-        roomId: roomId,
-        playerId: 'p$index',
-        payload: {
-          'username': 'player$index',
-          'name': 'Player $index',
-          'sessionToken': profiles[index]['sessionToken'],
-          'characterId': 'p1',
-        },
-      ));
+      clients[index].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.joinRoom,
+          roomId: roomId,
+          playerId: 'p$index',
+          payload: {
+            'username': 'player$index',
+            'name': 'Player $index',
+            'sessionToken': profiles[index]['sessionToken'],
+            'characterId': 'p1',
+          },
+        ),
+      );
     }
 
     await Future.wait([
@@ -126,12 +132,14 @@ void main() {
     );
 
     for (var index = 0; index < clients.length; index++) {
-      clients[index].send(MultiplayerMessage(
-        type: MultiplayerMessageType.playerReady,
-        roomId: roomId,
-        playerId: 'p$index',
-        payload: {'ready': true},
-      ));
+      clients[index].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.playerReady,
+          roomId: roomId,
+          playerId: 'p$index',
+          payload: {'ready': true},
+        ),
+      );
     }
 
     final startGame = await clients[0].expectType(
@@ -141,207 +149,228 @@ void main() {
     final players = startGame['players'] as List<dynamic>;
     expect(players, hasLength(4));
     expect(
-      players
-          .where((player) => player is Map && player['aiDifficulty'] != null),
+      players.where(
+        (player) => player is Map && player['aiDifficulty'] != null,
+      ),
       isEmpty,
     );
   });
 
-  test('four player room rejects teams that do not match seat partners',
-      () async {
-    final tempDir = Directory.systemTemp.createTempSync('zapiti_flow_test');
-    addTearDown(() => tempDir.deleteSync(recursive: true));
+  test(
+    'four player room rejects teams that do not match seat partners',
+    () async {
+      final tempDir = Directory.systemTemp.createTempSync('zapiti_flow_test');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
 
-    final rankingStore = RankingStore(path: '${tempDir.path}/ranking.sqlite');
-    final server = ZapitiServer(
-      customHost: '127.0.0.1',
-      customPort: 0,
-      customRankingStore: rankingStore,
-    );
-    await server.start();
-    addTearDown(server.stop);
-
-    final clients = [
-      await _TestClient.connect(server.port),
-      await _TestClient.connect(server.port),
-      await _TestClient.connect(server.port),
-      await _TestClient.connect(server.port),
-    ];
-    for (final client in clients) {
-      addTearDown(client.close);
-    }
-
-    final profiles = <Map<String, dynamic>>[];
-    for (var index = 0; index < clients.length; index++) {
-      clients[index].send(MultiplayerMessage(
-        type: MultiplayerMessageType.updateProfile,
-        playerId: 'p$index',
-        payload: {
-          'username': 'seat$index',
-          'name': 'Seat $index',
-          'password': 'secret$index',
-          'teamName': '',
-        },
-      ));
-      profiles.add(
-        await clients[index].expectType(MultiplayerMessageType.profile),
+      final rankingStore = RankingStore(path: '${tempDir.path}/ranking.sqlite');
+      final server = ZapitiServer(
+        customHost: '127.0.0.1',
+        customPort: 0,
+        customRankingStore: rankingStore,
       );
-    }
+      await server.start();
+      addTearDown(server.stop);
 
-    clients[0].send(MultiplayerMessage(
-      type: MultiplayerMessageType.createRoom,
-      playerId: 'p0',
-      payload: {
-        'username': 'seat0',
-        'name': 'Seat 0',
-        'sessionToken': profiles[0]['sessionToken'],
-        'characterId': 'p1',
-      },
-    ));
-    final createdRoom = await clients[0].expectType(
-      MultiplayerMessageType.roomSnapshot,
-    );
-    final roomId = createdRoom['roomId'] as String;
+      final clients = [
+        await _TestClient.connect(server.port),
+        await _TestClient.connect(server.port),
+        await _TestClient.connect(server.port),
+        await _TestClient.connect(server.port),
+      ];
+      for (final client in clients) {
+        addTearDown(client.close);
+      }
 
-    for (var index = 1; index < clients.length; index++) {
-      clients[index].send(MultiplayerMessage(
-        type: MultiplayerMessageType.joinRoom,
+      final profiles = <Map<String, dynamic>>[];
+      for (var index = 0; index < clients.length; index++) {
+        clients[index].send(
+          MultiplayerMessage(
+            type: MultiplayerMessageType.updateProfile,
+            playerId: 'p$index',
+            payload: {
+              'username': 'seat$index',
+              'name': 'Seat $index',
+              'password': 'secret$index',
+              'teamName': '',
+            },
+          ),
+        );
+        profiles.add(
+          await clients[index].expectType(MultiplayerMessageType.profile),
+        );
+      }
+
+      clients[0].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.createRoom,
+          playerId: 'p0',
+          payload: {
+            'username': 'seat0',
+            'name': 'Seat 0',
+            'sessionToken': profiles[0]['sessionToken'],
+            'characterId': 'p1',
+          },
+        ),
+      );
+      final createdRoom = await clients[0].expectType(
+        MultiplayerMessageType.roomSnapshot,
+      );
+      final roomId = createdRoom['roomId'] as String;
+
+      for (var index = 1; index < clients.length; index++) {
+        clients[index].send(
+          MultiplayerMessage(
+            type: MultiplayerMessageType.joinRoom,
+            roomId: roomId,
+            playerId: 'p$index',
+            payload: {
+              'username': 'seat$index',
+              'name': 'Seat $index',
+              'sessionToken': profiles[index]['sessionToken'],
+              'characterId': 'p1',
+            },
+          ),
+        );
+      }
+
+      await Future.wait([
+        for (final client in clients) client.expectRoomWithSeats(4),
+      ]);
+
+      final invalidPair = await _createTeam(
+        clients[0],
+        playerId: 'p0',
+        sessionToken: profiles[0]['sessionToken'] as String,
+        teammateUsername: 'seat1',
+        teamName: 'Invalid 0-1',
+      );
+      await _selectTeamExpectError(
+        clients[0],
         roomId: roomId,
-        playerId: 'p$index',
-        payload: {
-          'username': 'seat$index',
-          'name': 'Seat $index',
-          'sessionToken': profiles[index]['sessionToken'],
-          'characterId': 'p1',
-        },
-      ));
-    }
+        playerId: 'p0',
+        sessionToken: profiles[0]['sessionToken'] as String,
+        pairId: invalidPair,
+        code: 'invalid_team_for_room',
+      );
 
-    await Future.wait([
-      for (final client in clients) client.expectRoomWithSeats(4),
-    ]);
+      final validPair = await _createTeam(
+        clients[0],
+        playerId: 'p0',
+        sessionToken: profiles[0]['sessionToken'] as String,
+        teammateUsername: 'seat2',
+        teamName: 'Valid 0-2',
+      );
+      await _selectTeam(
+        clients[0],
+        roomId: roomId,
+        playerId: 'p0',
+        sessionToken: profiles[0]['sessionToken'] as String,
+        pairId: validPair,
+      );
+    },
+  );
 
-    final invalidPair = await _createTeam(
-      clients[0],
-      playerId: 'p0',
-      sessionToken: profiles[0]['sessionToken'] as String,
-      teammateUsername: 'seat1',
-      teamName: 'Invalid 0-1',
-    );
-    await _selectTeamExpectError(
-      clients[0],
-      roomId: roomId,
-      playerId: 'p0',
-      sessionToken: profiles[0]['sessionToken'] as String,
-      pairId: invalidPair,
-      code: 'invalid_team_for_room',
-    );
+  test(
+    'same player can take over an existing room seat on reconnect',
+    () async {
+      final tempDir = Directory.systemTemp.createTempSync('zapiti_flow_test');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
 
-    final validPair = await _createTeam(
-      clients[0],
-      playerId: 'p0',
-      sessionToken: profiles[0]['sessionToken'] as String,
-      teammateUsername: 'seat2',
-      teamName: 'Valid 0-2',
-    );
-    await _selectTeam(
-      clients[0],
-      roomId: roomId,
-      playerId: 'p0',
-      sessionToken: profiles[0]['sessionToken'] as String,
-      pairId: validPair,
-    );
-  });
+      final rankingStore = RankingStore(path: '${tempDir.path}/ranking.sqlite');
+      final server = ZapitiServer(
+        customHost: '127.0.0.1',
+        customPort: 0,
+        customRankingStore: rankingStore,
+      );
+      await server.start();
+      addTearDown(server.stop);
 
-  test('same player can take over an existing room seat on reconnect',
-      () async {
-    final tempDir = Directory.systemTemp.createTempSync('zapiti_flow_test');
-    addTearDown(() => tempDir.deleteSync(recursive: true));
+      final firstClient = await _TestClient.connect(server.port);
+      final replacementClient = await _TestClient.connect(server.port);
+      addTearDown(firstClient.close);
+      addTearDown(replacementClient.close);
 
-    final rankingStore = RankingStore(path: '${tempDir.path}/ranking.sqlite');
-    final server = ZapitiServer(
-      customHost: '127.0.0.1',
-      customPort: 0,
-      customRankingStore: rankingStore,
-    );
-    await server.start();
-    addTearDown(server.stop);
+      firstClient.send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.updateProfile,
+          playerId: 'reconnect0',
+          payload: {
+            'username': 'reconnect0',
+            'name': 'Reconnect 0',
+            'password': 'secret0',
+            'teamName': '',
+          },
+        ),
+      );
+      final profile = await firstClient.expectType(
+        MultiplayerMessageType.profile,
+      );
 
-    final firstClient = await _TestClient.connect(server.port);
-    final replacementClient = await _TestClient.connect(server.port);
-    addTearDown(firstClient.close);
-    addTearDown(replacementClient.close);
+      firstClient.send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.createRoom,
+          playerId: 'reconnect0',
+          payload: {
+            'username': 'reconnect0',
+            'name': 'Reconnect 0',
+            'sessionToken': profile['sessionToken'],
+            'characterId': 'p1',
+          },
+        ),
+      );
+      final createdRoom = await firstClient.expectType(
+        MultiplayerMessageType.roomSnapshot,
+      );
+      final roomId = createdRoom['roomId'] as String;
 
-    firstClient.send(MultiplayerMessage(
-      type: MultiplayerMessageType.updateProfile,
-      playerId: 'reconnect0',
-      payload: {
-        'username': 'reconnect0',
-        'name': 'Reconnect 0',
-        'password': 'secret0',
-        'teamName': '',
-      },
-    ));
-    final profile = await firstClient.expectType(
-      MultiplayerMessageType.profile,
-    );
+      replacementClient.send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.joinRoom,
+          roomId: roomId,
+          playerId: 'reconnect0',
+          payload: {
+            'username': 'reconnect0',
+            'name': 'Reconnect 0',
+            'sessionToken': profile['sessionToken'],
+            'characterId': 'p1',
+          },
+        ),
+      );
+      final reconnectedRoom = await replacementClient.expectType(
+        MultiplayerMessageType.roomSnapshot,
+      );
+      expect(reconnectedRoom['roomId'], roomId);
+      expect(reconnectedRoom['seats'], hasLength(1));
 
-    firstClient.send(MultiplayerMessage(
-      type: MultiplayerMessageType.createRoom,
-      playerId: 'reconnect0',
-      payload: {
-        'username': 'reconnect0',
-        'name': 'Reconnect 0',
-        'sessionToken': profile['sessionToken'],
-        'characterId': 'p1',
-      },
-    ));
-    final createdRoom = await firstClient.expectType(
-      MultiplayerMessageType.roomSnapshot,
-    );
-    final roomId = createdRoom['roomId'] as String;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      final room = server.roomManager.getRoom(roomId);
+      expect(room, isNotNull);
+      expect(room!.seats, hasLength(1));
+      expect(room.seats.single.playerId, 'reconnect0');
+      expect(room.getConnectionId('reconnect0'), isNotNull);
+    },
+  );
 
-    replacementClient.send(MultiplayerMessage(
-      type: MultiplayerMessageType.joinRoom,
-      roomId: roomId,
-      playerId: 'reconnect0',
-      payload: {
-        'username': 'reconnect0',
-        'name': 'Reconnect 0',
-        'sessionToken': profile['sessionToken'],
-        'characterId': 'p1',
-      },
-    ));
-    final reconnectedRoom = await replacementClient.expectType(
-      MultiplayerMessageType.roomSnapshot,
-    );
-    expect(reconnectedRoom['roomId'], roomId);
-    expect(reconnectedRoom['seats'], hasLength(1));
+  test(
+    'four simulated human players can play a multiplayer match',
+    () async {
+      final setup = await _createFourPlayerStartedMatch();
+      addTearDown(setup.close);
 
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    final room = server.roomManager.getRoom(roomId);
-    expect(room, isNotNull);
-    expect(room!.seats, hasLength(1));
-    expect(room.seats.single.playerId, 'reconnect0');
-    expect(room.getConnectionId('reconnect0'), isNotNull);
-  });
+      final match = await _playAutomatedHumanMatch(
+        clients: setup.clients,
+        roomId: setup.roomId,
+        playerIds: const ['p0', 'p1', 'p2', 'p3'],
+        initialSnapshot: setup.initialSnapshot,
+        maxActions: 160,
+        requireFinish: false,
+      );
 
-  test('four simulated human players can play a multiplayer match', () async {
-    final setup = await _createFourPlayerStartedMatch();
-    addTearDown(setup.close);
-
-    final match = await _playAutomatedHumanMatch(
-      clients: setup.clients,
-      roomId: setup.roomId,
-      playerIds: const ['p0', 'p1', 'p2', 'p3'],
-      initialSnapshot: setup.initialSnapshot,
-      maxActions: 160,
-      requireFinish: false,
-    );
-
-    expect(match['score'], isA<Map>());
-    expect(match['currentPlayerId'], isA<String>());
-  }, timeout: const Timeout(Duration(seconds: 20)));
+      expect(match['score'], isA<Map>());
+      expect(match['currentPlayerId'], isA<String>());
+    },
+    timeout: const Timeout(Duration(seconds: 20)),
+  );
 
   test('two players start with server-controlled hard bots', () async {
     final tempDir = Directory.systemTemp.createTempSync('zapiti_flow_test');
@@ -366,47 +395,53 @@ void main() {
 
     final profiles = <Map<String, dynamic>>[];
     for (var index = 0; index < clients.length; index++) {
-      clients[index].send(MultiplayerMessage(
-        type: MultiplayerMessageType.updateProfile,
-        playerId: 'p$index',
-        payload: {
-          'username': 'duo$index',
-          'name': 'Duo $index',
-          'password': 'secret$index',
-          'teamName': '',
-        },
-      ));
+      clients[index].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.updateProfile,
+          playerId: 'p$index',
+          payload: {
+            'username': 'duo$index',
+            'name': 'Duo $index',
+            'password': 'secret$index',
+            'teamName': '',
+          },
+        ),
+      );
       profiles.add(
         await clients[index].expectType(MultiplayerMessageType.profile),
       );
     }
 
-    clients[0].send(MultiplayerMessage(
-      type: MultiplayerMessageType.createRoom,
-      playerId: 'p0',
-      payload: {
-        'username': 'duo0',
-        'name': 'Duo 0',
-        'sessionToken': profiles[0]['sessionToken'],
-        'characterId': 'p1',
-      },
-    ));
+    clients[0].send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.createRoom,
+        playerId: 'p0',
+        payload: {
+          'username': 'duo0',
+          'name': 'Duo 0',
+          'sessionToken': profiles[0]['sessionToken'],
+          'characterId': 'p1',
+        },
+      ),
+    );
     final createdRoom = await clients[0].expectType(
       MultiplayerMessageType.roomSnapshot,
     );
     final roomId = createdRoom['roomId'] as String;
 
-    clients[1].send(MultiplayerMessage(
-      type: MultiplayerMessageType.joinRoom,
-      roomId: roomId,
-      playerId: 'p1',
-      payload: {
-        'username': 'duo1',
-        'name': 'Duo 1',
-        'sessionToken': profiles[1]['sessionToken'],
-        'characterId': 'p1',
-      },
-    ));
+    clients[1].send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.joinRoom,
+        roomId: roomId,
+        playerId: 'p1',
+        payload: {
+          'username': 'duo1',
+          'name': 'Duo 1',
+          'sessionToken': profiles[1]['sessionToken'],
+          'characterId': 'p1',
+        },
+      ),
+    );
     await Future.wait([
       for (final client in clients) client.expectRoomWithSeats(2),
     ]);
@@ -434,12 +469,14 @@ void main() {
     );
 
     for (var index = 0; index < clients.length; index++) {
-      clients[index].send(MultiplayerMessage(
-        type: MultiplayerMessageType.playerReady,
-        roomId: roomId,
-        playerId: 'p$index',
-        payload: {'ready': true},
-      ));
+      clients[index].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.playerReady,
+          roomId: roomId,
+          playerId: 'p$index',
+          payload: {'ready': true},
+        ),
+      );
     }
 
     final startGame = await clients[0].expectType(
@@ -478,56 +515,64 @@ void main() {
 
     final profiles = <Map<String, dynamic>>[];
     for (var index = 0; index < clients.length; index++) {
-      clients[index].send(MultiplayerMessage(
-        type: MultiplayerMessageType.updateProfile,
-        playerId: 'quick$index',
-        payload: {
-          'username': 'quick$index',
-          'name': 'Quick $index',
-          'password': 'secret$index',
-          'teamName': '',
-        },
-      ));
+      clients[index].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.updateProfile,
+          playerId: 'quick$index',
+          payload: {
+            'username': 'quick$index',
+            'name': 'Quick $index',
+            'password': 'secret$index',
+            'teamName': '',
+          },
+        ),
+      );
       profiles.add(
         await clients[index].expectType(MultiplayerMessageType.profile),
       );
     }
 
-    clients[0].send(MultiplayerMessage(
-      type: MultiplayerMessageType.createRoom,
-      playerId: 'quick0',
-      payload: {
-        'username': 'quick0',
-        'name': 'Quick 0',
-        'sessionToken': profiles[0]['sessionToken'],
-      },
-    ));
+    clients[0].send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.createRoom,
+        playerId: 'quick0',
+        payload: {
+          'username': 'quick0',
+          'name': 'Quick 0',
+          'sessionToken': profiles[0]['sessionToken'],
+        },
+      ),
+    );
     final createdRoom = await clients[0].expectType(
       MultiplayerMessageType.roomSnapshot,
     );
     final roomId = createdRoom['roomId'] as String;
 
-    clients[1].send(MultiplayerMessage(
-      type: MultiplayerMessageType.joinRoom,
-      roomId: roomId,
-      playerId: 'quick1',
-      payload: {
-        'username': 'quick1',
-        'name': 'Quick 1',
-        'sessionToken': profiles[1]['sessionToken'],
-      },
-    ));
+    clients[1].send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.joinRoom,
+        roomId: roomId,
+        playerId: 'quick1',
+        payload: {
+          'username': 'quick1',
+          'name': 'Quick 1',
+          'sessionToken': profiles[1]['sessionToken'],
+        },
+      ),
+    );
     await Future.wait([
       for (final client in clients) client.expectRoomWithSeats(2),
     ]);
 
     for (var index = 0; index < clients.length; index++) {
-      clients[index].send(MultiplayerMessage(
-        type: MultiplayerMessageType.playerReady,
-        roomId: roomId,
-        playerId: 'quick$index',
-        payload: {'ready': true},
-      ));
+      clients[index].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.playerReady,
+          roomId: roomId,
+          playerId: 'quick$index',
+          payload: {'ready': true},
+        ),
+      );
     }
 
     final startGame = await clients[0].expectType(
@@ -558,48 +603,54 @@ Future<_StartedMatchSetup> _createFourPlayerStartedMatch() async {
 
   final profiles = <Map<String, dynamic>>[];
   for (var index = 0; index < clients.length; index++) {
-    clients[index].send(MultiplayerMessage(
-      type: MultiplayerMessageType.updateProfile,
-      playerId: 'p$index',
-      payload: {
-        'username': 'sim$index',
-        'name': 'Sim $index',
-        'password': 'secret$index',
-        'teamName': '',
-      },
-    ));
+    clients[index].send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.updateProfile,
+        playerId: 'p$index',
+        payload: {
+          'username': 'sim$index',
+          'name': 'Sim $index',
+          'password': 'secret$index',
+          'teamName': '',
+        },
+      ),
+    );
     profiles.add(
       await clients[index].expectType(MultiplayerMessageType.profile),
     );
   }
 
-  clients[0].send(MultiplayerMessage(
-    type: MultiplayerMessageType.createRoom,
-    playerId: 'p0',
-    payload: {
-      'username': 'sim0',
-      'name': 'Sim 0',
-      'sessionToken': profiles[0]['sessionToken'],
-      'characterId': 'p1',
-    },
-  ));
+  clients[0].send(
+    MultiplayerMessage(
+      type: MultiplayerMessageType.createRoom,
+      playerId: 'p0',
+      payload: {
+        'username': 'sim0',
+        'name': 'Sim 0',
+        'sessionToken': profiles[0]['sessionToken'],
+        'characterId': 'p1',
+      },
+    ),
+  );
   final createdRoom = await clients[0].expectType(
     MultiplayerMessageType.roomSnapshot,
   );
   final roomId = createdRoom['roomId'] as String;
 
   for (var index = 1; index < clients.length; index++) {
-    clients[index].send(MultiplayerMessage(
-      type: MultiplayerMessageType.joinRoom,
-      roomId: roomId,
-      playerId: 'p$index',
-      payload: {
-        'username': 'sim$index',
-        'name': 'Sim $index',
-        'sessionToken': profiles[index]['sessionToken'],
-        'characterId': 'p1',
-      },
-    ));
+    clients[index].send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.joinRoom,
+        roomId: roomId,
+        playerId: 'p$index',
+        payload: {
+          'username': 'sim$index',
+          'name': 'Sim $index',
+          'sessionToken': profiles[index]['sessionToken'],
+          'characterId': 'p1',
+        },
+      ),
+    );
   }
   await Future.wait([
     for (final client in clients) client.expectRoomWithSeats(4),
@@ -650,19 +701,24 @@ Future<_StartedMatchSetup> _createFourPlayerStartedMatch() async {
   );
 
   for (var index = 0; index < clients.length; index++) {
-    clients[index].send(MultiplayerMessage(
-      type: MultiplayerMessageType.playerReady,
-      roomId: roomId,
-      playerId: 'p$index',
-      payload: {'ready': true},
-    ));
+    clients[index].send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.playerReady,
+        roomId: roomId,
+        playerId: 'p$index',
+        payload: {'ready': true},
+      ),
+    );
   }
 
+  final initialSnapshotFuture = clients[0].expectMatchSnapshot(
+    timeout: const Duration(seconds: 10),
+  );
   await clients[0].expectType(
     MultiplayerMessageType.startGame,
     timeout: const Duration(seconds: 5),
   );
-  final initialSnapshot = await clients[0].expectMatchSnapshot();
+  final initialSnapshot = await initialSnapshotFuture;
   return _StartedMatchSetup(
     tempDir: tempDir,
     server: server,
@@ -696,12 +752,14 @@ Future<Map<String, dynamic>> _playAutomatedHumanMatch({
     if (alVerState == 'awaitingDecision') {
       final teamId = match['alVerTeamId'] as int?;
       final playerId = _firstHumanPlayerForTeam(match, teamId);
-      clientsByPlayerId[playerId]!.send(MultiplayerMessage(
-        type: MultiplayerMessageType.chooseAlVerDecision,
-        roomId: roomId,
-        playerId: playerId,
-        payload: {'play': true},
-      ));
+      clientsByPlayerId[playerId]!.send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.chooseAlVerDecision,
+          roomId: roomId,
+          playerId: playerId,
+          payload: {'play': true},
+        ),
+      );
       snapshot = await clients[0].expectChangedMatchSnapshot(previousSignature);
       continue;
     }
@@ -709,31 +767,37 @@ Future<Map<String, dynamic>> _playAutomatedHumanMatch({
     if (match['pendingTrucoValue'] != null) {
       final responseTeamId = (match['trucoCallerTeamId'] as int?) == 1 ? 2 : 1;
       final playerId = _firstHumanPlayerForTeam(match, responseTeamId);
-      clientsByPlayerId[playerId]!.send(MultiplayerMessage(
-        type: MultiplayerMessageType.acceptTruco,
-        roomId: roomId,
-        playerId: playerId,
-      ));
+      clientsByPlayerId[playerId]!.send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.acceptTruco,
+          roomId: roomId,
+          playerId: playerId,
+        ),
+      );
       snapshot = await clients[0].expectChangedMatchSnapshot(previousSignature);
       continue;
     }
 
     if (match['handFinished'] == true) {
-      clients[0].send(MultiplayerMessage(
-        type: MultiplayerMessageType.newHand,
-        roomId: roomId,
-        playerId: playerIds.first,
-      ));
+      clients[0].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.newHand,
+          roomId: roomId,
+          playerId: playerIds.first,
+        ),
+      );
       snapshot = await clients[0].expectChangedMatchSnapshot(previousSignature);
       continue;
     }
 
     if (match['isRoundAwaitingContinue'] == true) {
-      clients[0].send(MultiplayerMessage(
-        type: MultiplayerMessageType.continueRound,
-        roomId: roomId,
-        playerId: playerIds.first,
-      ));
+      clients[0].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.continueRound,
+          roomId: roomId,
+          playerId: playerIds.first,
+        ),
+      );
       snapshot = await clients[0].expectChangedMatchSnapshot(previousSignature);
       continue;
     }
@@ -743,12 +807,14 @@ Future<Map<String, dynamic>> _playAutomatedHumanMatch({
     final hand = hands[currentPlayerId] as List<dynamic>;
     expect(hand, isNotEmpty, reason: 'Current player must have a card.');
     final card = Map<String, dynamic>.from(hand.first as Map);
-    clientsByPlayerId[currentPlayerId]!.send(MultiplayerMessage(
-      type: MultiplayerMessageType.playCard,
-      roomId: roomId,
-      playerId: currentPlayerId,
-      payload: {'card': card},
-    ));
+    clientsByPlayerId[currentPlayerId]!.send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.playCard,
+        roomId: roomId,
+        playerId: currentPlayerId,
+        payload: {'card': card},
+      ),
+    );
     snapshot = await clients[0].expectChangedMatchSnapshot(previousSignature);
   }
 
@@ -786,9 +852,8 @@ String _matchSignature(Map<String, dynamic> match) {
 String _firstHumanPlayerForTeam(Map<String, dynamic> match, int? teamId) {
   final players = match['players'] as List<dynamic>;
   final player = players.cast<Map>().firstWhere(
-        (player) =>
-            player['teamId'] == teamId && player['aiDifficulty'] == null,
-      );
+    (player) => player['teamId'] == teamId && player['aiDifficulty'] == null,
+  );
   return player['playerId'] as String;
 }
 
@@ -799,20 +864,22 @@ Future<String> _createTeam(
   required String teammateUsername,
   required String teamName,
 }) async {
-  client.send(MultiplayerMessage(
-    type: MultiplayerMessageType.createTeam,
-    playerId: playerId,
-    payload: {
-      'sessionToken': sessionToken,
-      'teammateUsername': teammateUsername,
-      'teamName': teamName,
-    },
-  ));
+  client.send(
+    MultiplayerMessage(
+      type: MultiplayerMessageType.createTeam,
+      playerId: playerId,
+      payload: {
+        'sessionToken': sessionToken,
+        'teammateUsername': teammateUsername,
+        'teamName': teamName,
+      },
+    ),
+  );
   final payload = await client.expectType(MultiplayerMessageType.teams);
   final teams = payload['teams'] as List<dynamic>;
   final team = teams.cast<Map>().firstWhere(
-        (entry) => entry['teamName'] == teamName,
-      );
+    (entry) => entry['teamName'] == teamName,
+  );
   return team['pairId'] as String;
 }
 
@@ -823,15 +890,14 @@ Future<void> _selectTeam(
   required String sessionToken,
   required String pairId,
 }) async {
-  client.send(MultiplayerMessage(
-    type: MultiplayerMessageType.selectTeam,
-    roomId: roomId,
-    playerId: playerId,
-    payload: {
-      'sessionToken': sessionToken,
-      'pairId': pairId,
-    },
-  ));
+  client.send(
+    MultiplayerMessage(
+      type: MultiplayerMessageType.selectTeam,
+      roomId: roomId,
+      playerId: playerId,
+      payload: {'sessionToken': sessionToken, 'pairId': pairId},
+    ),
+  );
   await client.expectRoomSeat(playerId, pairId);
 }
 
@@ -843,15 +909,14 @@ Future<void> _selectTeamExpectError(
   required String pairId,
   required String code,
 }) async {
-  client.send(MultiplayerMessage(
-    type: MultiplayerMessageType.selectTeam,
-    roomId: roomId,
-    playerId: playerId,
-    payload: {
-      'sessionToken': sessionToken,
-      'pairId': pairId,
-    },
-  ));
+  client.send(
+    MultiplayerMessage(
+      type: MultiplayerMessageType.selectTeam,
+      roomId: roomId,
+      playerId: playerId,
+      payload: {'sessionToken': sessionToken, 'pairId': pairId},
+    ),
+  );
   final error = await client.expectType(MultiplayerMessageType.error);
   expect(error['code'], code);
 }
@@ -891,46 +956,57 @@ class _TestClient {
   }
 
   Future<Map<String, dynamic>> expectRoomWithSeats(int seats) async {
-    final message = await _messages.stream.firstWhere((message) {
-      if (message.type != MultiplayerMessageType.roomSnapshot) return false;
-      final payload = message.payload;
-      return (payload?['seats'] as List<dynamic>? ?? const []).length == seats;
-    }).timeout(const Duration(seconds: 3));
+    final message = await _messages.stream
+        .firstWhere((message) {
+          if (message.type != MultiplayerMessageType.roomSnapshot) return false;
+          final payload = message.payload;
+          return (payload?['seats'] as List<dynamic>? ?? const []).length ==
+              seats;
+        })
+        .timeout(const Duration(seconds: 3));
     return message.payload ?? const {};
   }
 
   Future<void> expectRoomSeat(String playerId, String pairId) async {
-    await _messages.stream.firstWhere((message) {
-      if (message.type != MultiplayerMessageType.roomSnapshot) return false;
-      final seats = message.payload?['seats'] as List<dynamic>? ?? const [];
-      return seats.any(
-        (seat) =>
-            seat is Map &&
-            seat['playerId'] == playerId &&
-            seat['pairId'] == pairId,
-      );
-    }).timeout(const Duration(seconds: 3));
+    await _messages.stream
+        .firstWhere((message) {
+          if (message.type != MultiplayerMessageType.roomSnapshot) return false;
+          final seats = message.payload?['seats'] as List<dynamic>? ?? const [];
+          return seats.any(
+            (seat) =>
+                seat is Map &&
+                seat['playerId'] == playerId &&
+                seat['pairId'] == pairId,
+          );
+        })
+        .timeout(const Duration(seconds: 3));
   }
 
-  Future<Map<String, dynamic>> expectMatchSnapshot() async {
-    final message = await _messages.stream.firstWhere((message) {
-      if (message.type != MultiplayerMessageType.roomSnapshot) return false;
-      return message.payload?['match'] is Map;
-    }).timeout(const Duration(seconds: 3));
+  Future<Map<String, dynamic>> expectMatchSnapshot({
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    final message = await _messages.stream
+        .firstWhere((message) {
+          if (message.type != MultiplayerMessageType.roomSnapshot) return false;
+          return message.payload?['match'] is Map;
+        })
+        .timeout(timeout);
     return message.payload ?? const {};
   }
 
   Future<Map<String, dynamic>> expectChangedMatchSnapshot(
     String previousSignature,
   ) async {
-    final message = await _messages.stream.firstWhere((message) {
-      if (message.type != MultiplayerMessageType.roomSnapshot) return false;
-      final payload = message.payload;
-      final match = payload?['match'];
-      if (match is! Map) return false;
-      return _matchSignature(Map<String, dynamic>.from(match)) !=
-          previousSignature;
-    }).timeout(const Duration(seconds: 3));
+    final message = await _messages.stream
+        .firstWhere((message) {
+          if (message.type != MultiplayerMessageType.roomSnapshot) return false;
+          final payload = message.payload;
+          final match = payload?['match'];
+          if (match is! Map) return false;
+          return _matchSignature(Map<String, dynamic>.from(match)) !=
+              previousSignature;
+        })
+        .timeout(const Duration(seconds: 3));
     return message.payload ?? const {};
   }
 

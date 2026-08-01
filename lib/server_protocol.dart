@@ -63,9 +63,7 @@ class MultiplayerMessage {
 
   /// Serializar a JSON
   Map<String, dynamic> toJson() {
-    final json = <String, dynamic>{
-      'type': type.value,
-    };
+    final json = <String, dynamic>{'type': type.value};
 
     if (roomId != null) json['roomId'] = roomId;
     if (playerId != null) json['playerId'] = playerId;
@@ -169,17 +167,17 @@ class MultiplayerSeat {
 
   /// Serializar a JSON
   Map<String, dynamic> toJson() => {
-        'playerId': playerId,
-        'name': name,
-        if (username != null) 'username': username,
-        if (pairId != null) 'pairId': pairId,
-        if (teamName != null) 'teamName': teamName,
-        'seatIndex': seatIndex,
-        'teamId': teamId,
-        'ready': ready,
-        'connected': connected,
-        if (characterId != null) 'characterId': characterId,
-      };
+    'playerId': playerId,
+    'name': name,
+    if (username != null) 'username': username,
+    if (pairId != null) 'pairId': pairId,
+    if (teamName != null) 'teamName': teamName,
+    'seatIndex': seatIndex,
+    'teamId': teamId,
+    'ready': ready,
+    'connected': connected,
+    if (characterId != null) 'characterId': characterId,
+  };
 
   /// Decodificar desde JSON
   factory MultiplayerSeat.fromJson(Map<String, dynamic> json) {
@@ -230,20 +228,20 @@ class MultiplayerRoomSnapshot {
 
   /// Serializar a JSON
   Map<String, dynamic> toJson() => {
-        'roomId': roomId,
-        'seats': seats.map((s) => s.toJson()).toList(),
-        'phase': phase,
-        'createdAt': createdAt,
-      };
+    'roomId': roomId,
+    'seats': seats.map((s) => s.toJson()).toList(),
+    'phase': phase,
+    'createdAt': createdAt,
+  };
 
   /// Decodificar desde JSON
   factory MultiplayerRoomSnapshot.fromJson(Map<String, dynamic> json) {
     final seatsJson = json['seats'] as List?;
     final seats = seatsJson != null
         ? (seatsJson
-            .cast<Map<String, dynamic>>()
-            .map(MultiplayerSeat.fromJson)
-            .toList())
+              .cast<Map<String, dynamic>>()
+              .map(MultiplayerSeat.fromJson)
+              .toList())
         : <MultiplayerSeat>[];
 
     return MultiplayerRoomSnapshot(

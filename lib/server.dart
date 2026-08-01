@@ -8,6 +8,7 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'client_connection.dart';
 import 'match_state.dart';
+import 'ranking_repository.dart';
 import 'ranking_store.dart';
 import 'room.dart';
 import 'room_manager.dart';
@@ -17,7 +18,7 @@ class ZapitiServer {
   late int port;
   late String host;
   final RoomManager roomManager = RoomManager();
-  final RankingStore rankingStore;
+  final RankingRepository rankingStore;
   static const int _multiplayerBotDifficulty = 4;
   HttpServer? _httpServer;
 
@@ -31,10 +32,11 @@ class ZapitiServer {
   ZapitiServer({
     String? customHost,
     int? customPort,
-    RankingStore? customRankingStore,
+    RankingRepository? customRankingStore,
   }) : rankingStore = customRankingStore ?? RankingStore() {
     // Leer puerto de variable de entorno o usar default
-    port = customPort ??
+    port =
+        customPort ??
         int.tryParse(Platform.environment['PORT'] ?? '8080') ??
         8080;
     host = customHost ?? '0.0.0.0';
@@ -117,8 +119,9 @@ class ZapitiServer {
               'ready': seat.ready,
               'connected': seat.connected,
               'connectionId': room.getConnectionId(seat.playerId),
-              'connectionKnown':
-                  _connections.containsKey(room.getConnectionId(seat.playerId)),
+              'connectionKnown': _connections.containsKey(
+                room.getConnectionId(seat.playerId),
+              ),
             },
         ],
       },
@@ -206,7 +209,9 @@ class ZapitiServer {
   }
 
   void _handleWebSocketConnection(
-      WebSocketChannel webSocket, String? protocol) {
+    WebSocketChannel webSocket,
+    String? protocol,
+  ) {
     final connectionId = _getConnectionId();
     _log('connection_open', {
       'connectionId': connectionId,
@@ -229,7 +234,10 @@ class ZapitiServer {
   }
 
   /// Manejar mensaje de cliente
-  void _handleMessage(String connectionId, MultiplayerMessage message) {
+  Future<void> _handleMessage(
+    String connectionId,
+    MultiplayerMessage message,
+  ) async {
     final connection = _connections[connectionId];
     if (connection == null) return;
 
@@ -237,16 +245,16 @@ class ZapitiServer {
       _log('message_in', _messageLogFields(connection, message));
       switch (message.type) {
         case MultiplayerMessageType.createRoom:
-          _handleCreateRoom(connection, message);
+          await _handleCreateRoom(connection, message);
           break;
         case MultiplayerMessageType.joinRoom:
-          _handleJoinRoom(connection, message);
+          await _handleJoinRoom(connection, message);
           break;
         case MultiplayerMessageType.leaveRoom:
           _handleLeaveRoom(connection, message);
           break;
         case MultiplayerMessageType.playerReady:
-          _handlePlayerReady(connection, message);
+          await _handlePlayerReady(connection, message);
           break;
         case MultiplayerMessageType.requestSignal:
           _handleRequestSignal(connection, message);
@@ -255,28 +263,28 @@ class ZapitiServer {
           _handleSelectCharacter(connection, message);
           break;
         case MultiplayerMessageType.updateProfile:
-          _handleUpdateProfile(connection, message);
+          await _handleUpdateProfile(connection, message);
           break;
         case MultiplayerMessageType.recoverProfile:
-          _handleRecoverProfile(connection, message);
+          await _handleRecoverProfile(connection, message);
           break;
         case MultiplayerMessageType.listTeams:
-          _handleListTeams(connection, message);
+          await _handleListTeams(connection, message);
           break;
         case MultiplayerMessageType.createTeam:
-          _handleCreateTeam(connection, message);
+          await _handleCreateTeam(connection, message);
           break;
         case MultiplayerMessageType.updateTeam:
-          _handleUpdateTeam(connection, message);
+          await _handleUpdateTeam(connection, message);
           break;
         case MultiplayerMessageType.archiveTeam:
-          _handleArchiveTeam(connection, message);
+          await _handleArchiveTeam(connection, message);
           break;
         case MultiplayerMessageType.selectTeam:
-          _handleSelectTeam(connection, message);
+          await _handleSelectTeam(connection, message);
           break;
         case MultiplayerMessageType.getRanking:
-          _handleGetRanking(connection);
+          await _handleGetRanking(connection);
           break;
         case MultiplayerMessageType.newHand:
           _handleNewHand(connection, message);
@@ -285,7 +293,7 @@ class ZapitiServer {
           _handleRestartGame(connection, message);
           break;
         case MultiplayerMessageType.chooseAlVerDecision:
-          _handleGameMessage(connection, message);
+          await _handleGameMessage(connection, message);
           break;
         case MultiplayerMessageType.playCard:
         case MultiplayerMessageType.callTruco:
@@ -294,7 +302,7 @@ class ZapitiServer {
         case MultiplayerMessageType.raiseTruco:
         case MultiplayerMessageType.continueRound:
         case MultiplayerMessageType.signal:
-          _handleGameMessage(connection, message);
+          await _handleGameMessage(connection, message);
           break;
         default:
           connection.sendError('unknown_message_type', 'Unknown message type');
@@ -309,8 +317,10 @@ class ZapitiServer {
   }
 
   /// Crear sala
-  void _handleCreateRoom(
-      ClientConnection connection, MultiplayerMessage message) {
+  Future<void> _handleCreateRoom(
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) async {
     final payload = message.payload;
     if (payload == null) {
       connection.sendError('invalid_payload', 'Missing payload');
@@ -328,17 +338,19 @@ class ZapitiServer {
     final password = _sanitizePassword(
       (payload['password'] ?? payload['pin'])?.toString(),
     );
-    final sessionToken =
-        _sanitizeSessionToken(payload['sessionToken']?.toString());
+    final sessionToken = _sanitizeSessionToken(
+      payload['sessionToken']?.toString(),
+    );
     final teamName = _sanitizeTeamName(payload['teamName']?.toString());
     final pairId = _sanitizePairId(payload['pairId']?.toString());
 
-    final playerId = _sanitizePlayerId(message.playerId) ??
+    final playerId =
+        _sanitizePlayerId(message.playerId) ??
         'player_${DateTime.now().millisecondsSinceEpoch}_${_connections.length}';
 
     Room? room;
     try {
-      if (!_syncProfileForRoom(
+      if (!await _syncProfileForRoom(
         connection,
         playerId: playerId,
         username: username,
@@ -351,7 +363,7 @@ class ZapitiServer {
       }
       final selectedTeam = pairId == null
           ? null
-          : _authenticatedTeamForPlayer(
+          : await _authenticatedTeamForPlayer(
               connection,
               playerId: playerId,
               sessionToken: sessionToken,
@@ -421,8 +433,10 @@ class ZapitiServer {
   }
 
   /// Unirse a sala
-  void _handleJoinRoom(
-      ClientConnection connection, MultiplayerMessage message) {
+  Future<void> _handleJoinRoom(
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) async {
     final roomId = message.roomId;
     final payload = message.payload;
 
@@ -447,18 +461,20 @@ class ZapitiServer {
     final password = _sanitizePassword(
       (payload['password'] ?? payload['pin'])?.toString(),
     );
-    final sessionToken =
-        _sanitizeSessionToken(payload['sessionToken']?.toString());
+    final sessionToken = _sanitizeSessionToken(
+      payload['sessionToken']?.toString(),
+    );
     final teamName = _sanitizeTeamName(payload['teamName']?.toString());
     final pairId = _sanitizePairId(payload['pairId']?.toString());
-    final requestedPlayerId = _sanitizePlayerId(message.playerId) ??
+    final requestedPlayerId =
+        _sanitizePlayerId(message.playerId) ??
         'player_${DateTime.now().millisecondsSinceEpoch}_${_connections.length}';
 
     Room? room;
     var joinedNewSeat = false;
     String? supersededConnectionId;
     try {
-      if (!_syncProfileForRoom(
+      if (!await _syncProfileForRoom(
         connection,
         playerId: requestedPlayerId,
         username: username,
@@ -471,7 +487,7 @@ class ZapitiServer {
       }
       final selectedTeam = pairId == null
           ? null
-          : _authenticatedTeamForPlayer(
+          : await _authenticatedTeamForPlayer(
               connection,
               playerId: requestedPlayerId,
               sessionToken: sessionToken,
@@ -506,8 +522,9 @@ class ZapitiServer {
         'selectedPairId': selectedTeam?['pairId'],
         'isReconnectingSeat': isReconnectingSeat,
         'existingSeatConnection': existingSeatConnection,
-        'existingConnectionKnown':
-            _connections.containsKey(existingSeatConnection),
+        'existingConnectionKnown': _connections.containsKey(
+          existingSeatConnection,
+        ),
         ..._roomLogFields(room),
       });
       if (isReconnectingSeat) {
@@ -627,17 +644,19 @@ class ZapitiServer {
     }
   }
 
-  void _handleGetRanking(ClientConnection connection) {
-    connection.send(MultiplayerMessage(
-      type: MultiplayerMessageType.ranking,
-      payload: rankingStore.snapshot(),
-    ));
+  Future<void> _handleGetRanking(ClientConnection connection) async {
+    connection.send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.ranking,
+        payload: await rankingStore.snapshot(),
+      ),
+    );
   }
 
-  void _handleUpdateProfile(
+  Future<void> _handleUpdateProfile(
     ClientConnection connection,
     MultiplayerMessage message,
-  ) {
+  ) async {
     final payload = message.payload;
     final playerId = _sanitizePlayerId(message.playerId);
     if (payload == null || playerId == null) {
@@ -650,8 +669,9 @@ class ZapitiServer {
     final password = _sanitizePassword(
       (payload['password'] ?? payload['pin'])?.toString(),
     );
-    final sessionToken =
-        _sanitizeSessionToken(payload['sessionToken']?.toString());
+    final sessionToken = _sanitizeSessionToken(
+      payload['sessionToken']?.toString(),
+    );
     final teamName = _sanitizeTeamName(payload['teamName']?.toString());
     if (name == null) {
       connection.sendError('invalid_payload', 'Invalid profile name');
@@ -659,7 +679,7 @@ class ZapitiServer {
     }
 
     final profile = password != null && username != null
-        ? rankingStore.upsertPlayerProfile(
+        ? await rankingStore.upsertPlayerProfile(
             playerId: playerId,
             username: username,
             name: name,
@@ -667,25 +687,27 @@ class ZapitiServer {
             teamName: teamName,
           )
         : sessionToken == null
-            ? null
-            : rankingStore.updatePlayerProfileWithSession(
-                playerId: playerId,
-                name: name,
-                teamName: teamName,
-                sessionToken: sessionToken,
-              );
+        ? null
+        : await rankingStore.updatePlayerProfileWithSession(
+            playerId: playerId,
+            name: name,
+            teamName: teamName,
+            sessionToken: sessionToken,
+          );
     if (profile == null) {
       connection.sendError('auth_failed', 'Invalid profile session');
       return;
     }
-    connection.send(MultiplayerMessage(
-      type: MultiplayerMessageType.profile,
-      playerId: playerId,
-      payload: profile,
-    ));
+    connection.send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.profile,
+        playerId: playerId,
+        payload: profile,
+      ),
+    );
   }
 
-  bool _syncProfileForRoom(
+  Future<bool> _syncProfileForRoom(
     ClientConnection connection, {
     required String playerId,
     required String? username,
@@ -693,9 +715,9 @@ class ZapitiServer {
     required String teamName,
     required String? password,
     required String? sessionToken,
-  }) {
+  }) async {
     if (sessionToken != null) {
-      final profile = rankingStore.updatePlayerProfileWithSession(
+      final profile = await rankingStore.updatePlayerProfileWithSession(
         playerId: playerId,
         name: playerName,
         teamName: teamName,
@@ -709,7 +731,7 @@ class ZapitiServer {
     }
 
     if (username != null && password != null) {
-      final profile = rankingStore.upsertPlayerProfile(
+      final profile = await rankingStore.upsertPlayerProfile(
         playerId: playerId,
         username: username,
         name: playerName,
@@ -724,10 +746,10 @@ class ZapitiServer {
     return true;
   }
 
-  void _handleRecoverProfile(
+  Future<void> _handleRecoverProfile(
     ClientConnection connection,
     MultiplayerMessage message,
-  ) {
+  ) async {
     final payload = message.payload;
     final username = _sanitizeUsername(payload?['username']?.toString());
     final password = _sanitizePassword(
@@ -738,7 +760,7 @@ class ZapitiServer {
       return;
     }
 
-    final profile = rankingStore.recoverPlayerProfile(
+    final profile = await rankingStore.recoverPlayerProfile(
       username: username,
       password: password,
     );
@@ -747,53 +769,60 @@ class ZapitiServer {
       return;
     }
 
-    connection.send(MultiplayerMessage(
-      type: MultiplayerMessageType.profile,
-      playerId: profile['playerId']?.toString(),
-      payload: profile,
-    ));
+    connection.send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.profile,
+        playerId: profile['playerId']?.toString(),
+        payload: profile,
+      ),
+    );
   }
 
-  void _handleListTeams(
+  Future<void> _handleListTeams(
     ClientConnection connection,
     MultiplayerMessage message,
-  ) {
+  ) async {
     final playerId = _sanitizePlayerId(message.playerId);
-    final sessionToken =
-        _sanitizeSessionToken(message.payload?['sessionToken']?.toString());
+    final sessionToken = _sanitizeSessionToken(
+      message.payload?['sessionToken']?.toString(),
+    );
     if (playerId == null || sessionToken == null) {
       connection.sendError('auth_failed', 'Invalid profile session');
       return;
     }
 
-    final teams = rankingStore.teamsForPlayer(
+    final teams = await rankingStore.teamsForPlayer(
       playerId: playerId,
       sessionToken: sessionToken,
     );
-    connection.send(MultiplayerMessage(
-      type: MultiplayerMessageType.teams,
-      playerId: playerId,
-      payload: {'teams': teams},
-    ));
+    connection.send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.teams,
+        playerId: playerId,
+        payload: {'teams': teams},
+      ),
+    );
   }
 
-  void _handleCreateTeam(
+  Future<void> _handleCreateTeam(
     ClientConnection connection,
     MultiplayerMessage message,
-  ) {
+  ) async {
     final payload = message.payload;
     final playerId = _sanitizePlayerId(message.playerId);
-    final sessionToken =
-        _sanitizeSessionToken(payload?['sessionToken']?.toString());
-    final teammateUsername =
-        _sanitizeUsername(payload?['teammateUsername']?.toString());
+    final sessionToken = _sanitizeSessionToken(
+      payload?['sessionToken']?.toString(),
+    );
+    final teammateUsername = _sanitizeUsername(
+      payload?['teammateUsername']?.toString(),
+    );
     final teamName = _sanitizeTeamName(payload?['teamName']?.toString());
     if (playerId == null || sessionToken == null || teammateUsername == null) {
       connection.sendError('invalid_payload', 'Invalid team payload');
       return;
     }
 
-    final team = rankingStore.createTeamForPlayer(
+    final team = await rankingStore.createTeamForPlayer(
       playerId: playerId,
       sessionToken: sessionToken,
       teammateUsername: teammateUsername,
@@ -803,17 +832,18 @@ class ZapitiServer {
       connection.sendError('team_not_found', 'Could not create team');
       return;
     }
-    _sendTeamsForPlayer(connection, playerId, sessionToken);
+    await _sendTeamsForPlayer(connection, playerId, sessionToken);
   }
 
-  void _handleUpdateTeam(
+  Future<void> _handleUpdateTeam(
     ClientConnection connection,
     MultiplayerMessage message,
-  ) {
+  ) async {
     final payload = message.payload;
     final playerId = _sanitizePlayerId(message.playerId);
-    final sessionToken =
-        _sanitizeSessionToken(payload?['sessionToken']?.toString());
+    final sessionToken = _sanitizeSessionToken(
+      payload?['sessionToken']?.toString(),
+    );
     final pairId = _sanitizePairId(payload?['pairId']?.toString());
     final teamName = _sanitizeTeamName(payload?['teamName']?.toString());
     if (playerId == null ||
@@ -824,7 +854,7 @@ class ZapitiServer {
       return;
     }
 
-    final team = rankingStore.updateTeamName(
+    final team = await rankingStore.updateTeamName(
       playerId: playerId,
       sessionToken: sessionToken,
       pairId: pairId,
@@ -834,24 +864,25 @@ class ZapitiServer {
       connection.sendError('team_not_found', 'Team not found');
       return;
     }
-    _sendTeamsForPlayer(connection, playerId, sessionToken);
+    await _sendTeamsForPlayer(connection, playerId, sessionToken);
   }
 
-  void _handleArchiveTeam(
+  Future<void> _handleArchiveTeam(
     ClientConnection connection,
     MultiplayerMessage message,
-  ) {
+  ) async {
     final payload = message.payload;
     final playerId = _sanitizePlayerId(message.playerId);
-    final sessionToken =
-        _sanitizeSessionToken(payload?['sessionToken']?.toString());
+    final sessionToken = _sanitizeSessionToken(
+      payload?['sessionToken']?.toString(),
+    );
     final pairId = _sanitizePairId(payload?['pairId']?.toString());
     if (playerId == null || sessionToken == null || pairId == null) {
       connection.sendError('invalid_payload', 'Invalid team payload');
       return;
     }
 
-    final team = rankingStore.archiveTeam(
+    final team = await rankingStore.archiveTeam(
       playerId: playerId,
       sessionToken: sessionToken,
       pairId: pairId,
@@ -860,18 +891,19 @@ class ZapitiServer {
       connection.sendError('team_not_found', 'Team not found');
       return;
     }
-    _sendTeamsForPlayer(connection, playerId, sessionToken);
+    await _sendTeamsForPlayer(connection, playerId, sessionToken);
   }
 
-  void _handleSelectTeam(
+  Future<void> _handleSelectTeam(
     ClientConnection connection,
     MultiplayerMessage message,
-  ) {
+  ) async {
     final roomId = message.roomId;
     final payload = message.payload;
     final playerId = _sanitizePlayerId(message.playerId);
-    final sessionToken =
-        _sanitizeSessionToken(payload?['sessionToken']?.toString());
+    final sessionToken = _sanitizeSessionToken(
+      payload?['sessionToken']?.toString(),
+    );
     final pairId = _sanitizePairId(payload?['pairId']?.toString());
     if (roomId == null ||
         playerId == null ||
@@ -895,7 +927,7 @@ class ZapitiServer {
       return;
     }
 
-    final team = _authenticatedTeamForPlayer(
+    final team = await _authenticatedTeamForPlayer(
       connection,
       playerId: playerId,
       sessionToken: sessionToken,
@@ -934,17 +966,17 @@ class ZapitiServer {
     _broadcastRoomSnapshot(roomId);
   }
 
-  Map<String, dynamic>? _authenticatedTeamForPlayer(
+  Future<Map<String, dynamic>?> _authenticatedTeamForPlayer(
     ClientConnection connection, {
     required String playerId,
     required String? sessionToken,
     required String pairId,
-  }) {
+  }) async {
     if (sessionToken == null) {
       connection.sendError('auth_failed', 'Invalid profile session');
       return null;
     }
-    final team = rankingStore.teamForPlayer(
+    final team = await rankingStore.teamForPlayer(
       playerId: playerId,
       sessionToken: sessionToken,
       pairId: pairId,
@@ -962,48 +994,49 @@ class ZapitiServer {
     Map<String, dynamic> team,
   ) {
     final localSeat = room.seats.cast<MultiplayerSeat?>().firstWhere(
-          (seat) => seat?.playerId == playerId,
-          orElse: () => null,
-        );
-    if (localSeat == null) return false;
-
-    final teammateSeat = room.seats.cast<MultiplayerSeat?>().firstWhere(
-      (seat) {
-        if (seat == null || seat.playerId == playerId) return false;
-        if (room.seats.length == 2) return true;
-        return seat.teamId == localSeat.teamId;
-      },
+      (seat) => seat?.playerId == playerId,
       orElse: () => null,
     );
+    if (localSeat == null) return false;
+
+    final teammateSeat = room.seats.cast<MultiplayerSeat?>().firstWhere((seat) {
+      if (seat == null || seat.playerId == playerId) return false;
+      if (room.seats.length == 2) return true;
+      return seat.teamId == localSeat.teamId;
+    }, orElse: () => null);
     if (teammateSeat == null) return false;
 
     final teammateIds = team['teammateIds'];
     if (teammateIds is! List) return false;
-    return teammateIds.map((entry) => entry.toString()).contains(
-          teammateSeat.playerId,
-        );
+    return teammateIds
+        .map((entry) => entry.toString())
+        .contains(teammateSeat.playerId);
   }
 
-  void _sendTeamsForPlayer(
+  Future<void> _sendTeamsForPlayer(
     ClientConnection connection,
     String playerId,
     String sessionToken,
-  ) {
-    connection.send(MultiplayerMessage(
-      type: MultiplayerMessageType.teams,
-      playerId: playerId,
-      payload: {
-        'teams': rankingStore.teamsForPlayer(
-          playerId: playerId,
-          sessionToken: sessionToken,
-        ),
-      },
-    ));
+  ) async {
+    connection.send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.teams,
+        playerId: playerId,
+        payload: {
+          'teams': await rankingStore.teamsForPlayer(
+            playerId: playerId,
+            sessionToken: sessionToken,
+          ),
+        },
+      ),
+    );
   }
 
   /// Abandonar sala
   void _handleLeaveRoom(
-      ClientConnection connection, MultiplayerMessage message) {
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) {
     final roomId = message.roomId;
     final playerId = message.playerId;
 
@@ -1037,8 +1070,10 @@ class ZapitiServer {
   }
 
   /// Marcar jugador como listo
-  void _handlePlayerReady(
-      ClientConnection connection, MultiplayerMessage message) {
+  Future<void> _handlePlayerReady(
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) async {
     final roomId = message.roomId;
     final playerId = message.playerId;
     final payload = message.payload;
@@ -1102,15 +1137,15 @@ class ZapitiServer {
         'roomId': roomId,
         ..._roomLogFields(room),
       });
-      _startMatch(room);
+      await _startMatch(room);
     }
   }
 
   bool _requiresTeamSelection(Room room, String playerId) {
     final localSeat = room.seats.cast<MultiplayerSeat?>().firstWhere(
-          (seat) => seat?.playerId == playerId,
-          orElse: () => null,
-        );
+      (seat) => seat?.playerId == playerId,
+      orElse: () => null,
+    );
     if (localSeat == null) return false;
     if (room.seats.length < Room.maxSeats) return false;
     final hasHumanTeammate = room.seats.any((seat) {
@@ -1320,8 +1355,10 @@ class ZapitiServer {
   }
 
   /// Manejar mensajes de juego de forma autoritativa
-  void _handleGameMessage(
-      ClientConnection connection, MultiplayerMessage message) {
+  Future<void> _handleGameMessage(
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) async {
     final roomId = message.roomId;
     final playerId = message.playerId;
 
@@ -1378,8 +1415,11 @@ class ZapitiServer {
         _handleContinueRound(connection, room, match, message);
         break;
       case MultiplayerMessageType.signal:
-        _broadcastToRoom(roomId, message,
-            excludeConnection: connection.connectionId);
+        _broadcastToRoom(
+          roomId,
+          message,
+          excludeConnection: connection.connectionId,
+        );
         break;
       default:
         connection.sendError('unknown_message_type', 'Unknown game message');
@@ -1387,15 +1427,12 @@ class ZapitiServer {
 
     _broadcastRoomSnapshot(roomId);
     _advanceMatchIfNeeded(room, excludeConnection: connection.connectionId);
-    _recordMatchIfFinished(room);
+    await _recordMatchIfFinished(room);
     _broadcastRoomSnapshot(roomId);
   }
 
-  void _startMatch(Room room) {
-    _log('match_starting', {
-      'roomId': room.roomId,
-      ..._roomLogFields(room),
-    });
+  Future<void> _startMatch(Room room) async {
+    _log('match_starting', {'roomId': room.roomId, ..._roomLogFields(room)});
     room.setPhase('starting');
     final match = MatchState.start(
       roomId: room.roomId,
@@ -1417,7 +1454,7 @@ class ZapitiServer {
     room.setPhase('playing');
     _broadcastRoomSnapshot(room.roomId);
     _advanceMatchIfNeeded(room);
-    _recordMatchIfFinished(room);
+    await _recordMatchIfFinished(room);
     _broadcastRoomSnapshot(room.roomId);
   }
 
@@ -1853,10 +1890,7 @@ class ZapitiServer {
 
       final bot = match.currentPlayer;
       if (match.shouldBotCallTruco(bot)) {
-        match.callTruco(
-          bot.playerId,
-          value: TrucoRules.firstTrucoValue,
-        );
+        match.callTruco(bot.playerId, value: TrucoRules.firstTrucoValue);
         _broadcastToRoom(
           room.roomId,
           MultiplayerMessage(
@@ -1903,14 +1937,27 @@ class ZapitiServer {
       return;
     }
 
-    final delayMillis = max(0, deadline - DateTime.now().millisecondsSinceEpoch);
+    final delayMillis = max(
+      0,
+      deadline - DateTime.now().millisecondsSinceEpoch,
+    );
     _turnTimeoutTimers[room.roomId] = Timer(
       Duration(milliseconds: delayMillis),
-      () => _handleTurnTimeout(room.roomId, deadline),
+      () {
+        _handleTurnTimeout(room.roomId, deadline).catchError((
+          Object error,
+          StackTrace stackTrace,
+        ) {
+          _log('turn_timeout_handler_error', {
+            'roomId': room.roomId,
+            'error': error.toString(),
+          });
+        });
+      },
     );
   }
 
-  void _handleTurnTimeout(String roomId, int expectedDeadline) {
+  Future<void> _handleTurnTimeout(String roomId, int expectedDeadline) async {
     _turnTimeoutTimers.remove(roomId)?.cancel();
     final room = roomManager.getRoom(roomId);
     final match = room?.match;
@@ -1950,18 +1997,18 @@ class ZapitiServer {
     );
     _broadcastRoomSnapshot(room.roomId);
     _advanceMatchIfNeeded(room);
-    _recordMatchIfFinished(room);
+    await _recordMatchIfFinished(room);
     _broadcastRoomSnapshot(room.roomId);
   }
 
-  void _recordMatchIfFinished(Room room) {
+  Future<void> _recordMatchIfFinished(Room room) async {
     final match = room.match;
     if (match == null || match.winningTeamId == null) return;
 
     final matchId = '${match.roomId}_${match.seed}';
     if (_recordedMatchIds.contains(matchId)) return;
 
-    rankingStore.recordFinishedMatch(match);
+    await rankingStore.recordFinishedMatch(match);
     _recordedMatchIds.add(matchId);
   }
 
@@ -2026,12 +2073,14 @@ class ZapitiServer {
       if (connId != null) {
         final connection = _connections[connId];
         if (connection != null) {
-          connection.send(MultiplayerMessage(
-            type: MultiplayerMessageType.roomSnapshot,
-            roomId: roomId,
-            playerId: seat.playerId,
-            payload: payload,
-          ));
+          connection.send(
+            MultiplayerMessage(
+              type: MultiplayerMessageType.roomSnapshot,
+              roomId: roomId,
+              playerId: seat.playerId,
+              payload: payload,
+            ),
+          );
         }
       }
     }
@@ -2058,12 +2107,14 @@ class ZapitiServer {
         ..['controlledPlayerIds'] = [seat.playerId]
         ..['localSeatIndex'] = localPlayerIndex < 0 ? 0 : localPlayerIndex;
 
-      connection.send(MultiplayerMessage(
-        type: MultiplayerMessageType.startGame,
-        roomId: roomId,
-        playerId: seat.playerId,
-        payload: localPayload,
-      ));
+      connection.send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.startGame,
+          roomId: roomId,
+          playerId: seat.playerId,
+          payload: localPayload,
+        ),
+      );
     }
   }
 
@@ -2123,9 +2174,7 @@ class ZapitiServer {
       if (request.url.path == 'health') {
         return shelf.Response.ok(
           jsonEncode({'status': 'ok'}),
-          headers: const {
-            'content-type': 'application/json; charset=utf-8',
-          },
+          headers: const {'content-type': 'application/json; charset=utf-8'},
         );
       }
       // Delegar a WebSocket handler
@@ -2147,7 +2196,7 @@ class ZapitiServer {
     await _httpServer?.close(force: true);
     _httpServer = null;
     if (closeRankingStore) {
-      rankingStore.close();
+      await rankingStore.close();
     }
   }
 }

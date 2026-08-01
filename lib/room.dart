@@ -16,10 +16,7 @@ class Room {
   // Map de playerId -> clientConnectionId para saber a quién enviar mensajes
   final Map<String, String> _playerToConnection = {};
 
-  Room({
-    required this.roomId,
-    required this.createdAt,
-  });
+  Room({required this.roomId, required this.createdAt});
 
   String get phase => _phase;
   List<MultiplayerSeat> get seats => List.unmodifiable(_seats);

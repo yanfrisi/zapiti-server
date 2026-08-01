@@ -22,16 +22,18 @@ Future<void> main(List<String> args) async {
     final profiles = <Map<String, dynamic>>[];
     for (var index = 0; index < clients.length; index++) {
       final username = 'probe_${runId}_$index';
-      clients[index].send(MultiplayerMessage(
-        type: MultiplayerMessageType.updateProfile,
-        playerId: 'probe_${runId}_p$index',
-        payload: {
-          'username': username,
-          'name': 'Probe $index',
-          'password': 'secret$index$runId',
-          'teamName': '',
-        },
-      ));
+      clients[index].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.updateProfile,
+          playerId: 'probe_${runId}_p$index',
+          payload: {
+            'username': username,
+            'name': 'Probe $index',
+            'password': 'secret$index$runId',
+            'teamName': '',
+          },
+        ),
+      );
       final profile = await clients[index].expectType(
         MultiplayerMessageType.profile,
       );
@@ -43,16 +45,18 @@ Future<void> main(List<String> args) async {
       print('profile[$index]=${profile['playerId']} user=$username');
     }
 
-    clients[0].send(MultiplayerMessage(
-      type: MultiplayerMessageType.createRoom,
-      playerId: profiles[0]['playerId'] as String,
-      payload: {
-        'username': profiles[0]['username'],
-        'name': 'Probe 0',
-        'sessionToken': profiles[0]['sessionToken'],
-        'characterId': 'p1',
-      },
-    ));
+    clients[0].send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.createRoom,
+        playerId: profiles[0]['playerId'] as String,
+        payload: {
+          'username': profiles[0]['username'],
+          'name': 'Probe 0',
+          'sessionToken': profiles[0]['sessionToken'],
+          'characterId': 'p1',
+        },
+      ),
+    );
     final created = await clients[0].expectType(
       MultiplayerMessageType.roomSnapshot,
     );
@@ -60,17 +64,19 @@ Future<void> main(List<String> args) async {
     print('room=$roomId');
 
     for (var index = 1; index < clients.length; index++) {
-      clients[index].send(MultiplayerMessage(
-        type: MultiplayerMessageType.joinRoom,
-        roomId: roomId,
-        playerId: profiles[index]['playerId'] as String,
-        payload: {
-          'username': profiles[index]['username'],
-          'name': 'Probe $index',
-          'sessionToken': profiles[index]['sessionToken'],
-          'characterId': 'p1',
-        },
-      ));
+      clients[index].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.joinRoom,
+          roomId: roomId,
+          playerId: profiles[index]['playerId'] as String,
+          payload: {
+            'username': profiles[index]['username'],
+            'name': 'Probe $index',
+            'sessionToken': profiles[index]['sessionToken'],
+            'characterId': 'p1',
+          },
+        ),
+      );
     }
     await Future.wait([
       for (final client in clients) client.expectRoomWithSeats(4),
@@ -100,12 +106,14 @@ Future<void> main(List<String> args) async {
     print('teams selected by all seats');
 
     for (var index = 0; index < clients.length; index++) {
-      clients[index].send(MultiplayerMessage(
-        type: MultiplayerMessageType.playerReady,
-        roomId: roomId,
-        playerId: profiles[index]['playerId'] as String,
-        payload: {'ready': true},
-      ));
+      clients[index].send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.playerReady,
+          roomId: roomId,
+          playerId: profiles[index]['playerId'] as String,
+          payload: {'ready': true},
+        ),
+      );
     }
     final start = await clients[0].expectType(
       MultiplayerMessageType.startGame,
@@ -119,9 +127,11 @@ Future<void> main(List<String> args) async {
       profiles: profiles,
       maxActions: maxActions,
     );
-    print('played probe actions; score=${jsonEncode(lastMatch['score'])} '
-        'handFinished=${lastMatch['handFinished']} '
-        'winningTeamId=${lastMatch['winningTeamId']}');
+    print(
+      'played probe actions; score=${jsonEncode(lastMatch['score'])} '
+      'handFinished=${lastMatch['handFinished']} '
+      'winningTeamId=${lastMatch['winningTeamId']}',
+    );
 
     if (errors.isEmpty) {
       print('PROBE_OK');
@@ -150,25 +160,24 @@ Future<String> createTeam(
   required String teammateUsername,
   required String teamName,
 }) async {
-  client.send(MultiplayerMessage(
-    type: MultiplayerMessageType.createTeam,
-    playerId: playerId,
-    payload: {
-      'sessionToken': sessionToken,
-      'teammateUsername': teammateUsername,
-      'teamName': teamName,
-    },
-  ));
+  client.send(
+    MultiplayerMessage(
+      type: MultiplayerMessageType.createTeam,
+      playerId: playerId,
+      payload: {
+        'sessionToken': sessionToken,
+        'teammateUsername': teammateUsername,
+        'teamName': teamName,
+      },
+    ),
+  );
   final payload = await client.expectType(MultiplayerMessageType.teams);
   final teams = payload['teams'] as List<dynamic>;
-  final team = teams.cast<Map>().firstWhere(
-    (team) {
-      final names = team['teammateUsernames'];
-      return names is List &&
-          names.map((entry) => entry.toString()).contains(teammateUsername);
-    },
-    orElse: () => throw StateError('Created team not found in $teams'),
-  );
+  final team = teams.cast<Map>().firstWhere((team) {
+    final names = team['teammateUsernames'];
+    return names is List &&
+        names.map((entry) => entry.toString()).contains(teammateUsername);
+  }, orElse: () => throw StateError('Created team not found in $teams'));
   return team['pairId'] as String;
 }
 
@@ -178,15 +187,14 @@ Future<void> selectTeam(
   Map<String, dynamic> profile,
   String pairId,
 ) async {
-  client.send(MultiplayerMessage(
-    type: MultiplayerMessageType.selectTeam,
-    roomId: roomId,
-    playerId: profile['playerId'] as String,
-    payload: {
-      'sessionToken': profile['sessionToken'],
-      'pairId': pairId,
-    },
-  ));
+  client.send(
+    MultiplayerMessage(
+      type: MultiplayerMessageType.selectTeam,
+      roomId: roomId,
+      playerId: profile['playerId'] as String,
+      payload: {'sessionToken': profile['sessionToken'], 'pairId': pairId},
+    ),
+  );
   await client.expectSeatPair(profile['playerId'] as String, pairId);
 }
 
@@ -208,12 +216,14 @@ Future<Map<String, dynamic>> playSomeTurns({
 
     if (match['alVerState'] == 'awaitingDecision') {
       final playerId = firstHumanForTeam(match, match['alVerTeamId'] as int?);
-      clientsByPlayerId[playerId]!.send(MultiplayerMessage(
-        type: MultiplayerMessageType.chooseAlVerDecision,
-        roomId: roomId,
-        playerId: playerId,
-        payload: {'play': true},
-      ));
+      clientsByPlayerId[playerId]!.send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.chooseAlVerDecision,
+          roomId: roomId,
+          playerId: playerId,
+          payload: {'play': true},
+        ),
+      );
       snapshot = await clients[0].expectChangedMatchSnapshot(signature);
       continue;
     }
@@ -222,33 +232,39 @@ Future<Map<String, dynamic>> playSomeTurns({
       final caller = match['trucoCallerTeamId'] as int?;
       final responseTeam = caller == 1 ? 2 : 1;
       final playerId = firstHumanForTeam(match, responseTeam);
-      clientsByPlayerId[playerId]!.send(MultiplayerMessage(
-        type: MultiplayerMessageType.acceptTruco,
-        roomId: roomId,
-        playerId: playerId,
-      ));
+      clientsByPlayerId[playerId]!.send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.acceptTruco,
+          roomId: roomId,
+          playerId: playerId,
+        ),
+      );
       snapshot = await clients[0].expectChangedMatchSnapshot(signature);
       continue;
     }
 
     if (match['handFinished'] == true) {
       final playerId = profiles.first['playerId'] as String;
-      clients.first.send(MultiplayerMessage(
-        type: MultiplayerMessageType.newHand,
-        roomId: roomId,
-        playerId: playerId,
-      ));
+      clients.first.send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.newHand,
+          roomId: roomId,
+          playerId: playerId,
+        ),
+      );
       snapshot = await clients[0].expectChangedMatchSnapshot(signature);
       continue;
     }
 
     if (match['isRoundAwaitingContinue'] == true) {
       final playerId = profiles.first['playerId'] as String;
-      clients.first.send(MultiplayerMessage(
-        type: MultiplayerMessageType.continueRound,
-        roomId: roomId,
-        playerId: playerId,
-      ));
+      clients.first.send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.continueRound,
+          roomId: roomId,
+          playerId: playerId,
+        ),
+      );
       snapshot = await clients[0].expectChangedMatchSnapshot(signature);
       continue;
     }
@@ -259,12 +275,14 @@ Future<Map<String, dynamic>> playSomeTurns({
     if (hand.isEmpty) {
       throw StateError('current player $playerId has no cards');
     }
-    clientsByPlayerId[playerId]!.send(MultiplayerMessage(
-      type: MultiplayerMessageType.playCard,
-      roomId: roomId,
-      playerId: playerId,
-      payload: {'card': Map<String, dynamic>.from(hand.first as Map)},
-    ));
+    clientsByPlayerId[playerId]!.send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.playCard,
+        roomId: roomId,
+        playerId: playerId,
+        payload: {'card': Map<String, dynamic>.from(hand.first as Map)},
+      ),
+    );
     snapshot = await clients[0].expectChangedMatchSnapshot(signature);
   }
   return snapshot['match'] as Map<String, dynamic>;
@@ -273,9 +291,8 @@ Future<Map<String, dynamic>> playSomeTurns({
 String firstHumanForTeam(Map<String, dynamic> match, int? teamId) {
   final players = match['players'] as List<dynamic>;
   final player = players.cast<Map>().firstWhere(
-        (player) =>
-            player['teamId'] == teamId && player['aiDifficulty'] == null,
-      );
+    (player) => player['teamId'] == teamId && player['aiDifficulty'] == null,
+  );
   return player['playerId'] as String;
 }
 
@@ -348,32 +365,39 @@ class ProbeClient {
   }
 
   Future<Map<String, dynamic>> expectRoomWithSeats(int seats) async {
-    final message = await _messages.stream.firstWhere((message) {
-      if (message.type != MultiplayerMessageType.roomSnapshot) return false;
-      final payload = message.payload;
-      return (payload?['seats'] as List<dynamic>? ?? const []).length == seats;
-    }).timeout(const Duration(seconds: 8));
+    final message = await _messages.stream
+        .firstWhere((message) {
+          if (message.type != MultiplayerMessageType.roomSnapshot) return false;
+          final payload = message.payload;
+          return (payload?['seats'] as List<dynamic>? ?? const []).length ==
+              seats;
+        })
+        .timeout(const Duration(seconds: 8));
     return message.payload ?? const {};
   }
 
   Future<void> expectSeatPair(String playerId, String pairId) async {
-    await _messages.stream.firstWhere((message) {
-      if (message.type != MultiplayerMessageType.roomSnapshot) return false;
-      final seats = message.payload?['seats'] as List<dynamic>? ?? const [];
-      return seats.any(
-        (seat) =>
-            seat is Map &&
-            seat['playerId'] == playerId &&
-            seat['pairId'] == pairId,
-      );
-    }).timeout(const Duration(seconds: 8));
+    await _messages.stream
+        .firstWhere((message) {
+          if (message.type != MultiplayerMessageType.roomSnapshot) return false;
+          final seats = message.payload?['seats'] as List<dynamic>? ?? const [];
+          return seats.any(
+            (seat) =>
+                seat is Map &&
+                seat['playerId'] == playerId &&
+                seat['pairId'] == pairId,
+          );
+        })
+        .timeout(const Duration(seconds: 8));
   }
 
   Future<Map<String, dynamic>> expectMatchSnapshot() async {
     final message = await _messages.stream
-        .firstWhere((message) =>
-            message.type == MultiplayerMessageType.roomSnapshot &&
-            message.payload?['match'] is Map)
+        .firstWhere(
+          (message) =>
+              message.type == MultiplayerMessageType.roomSnapshot &&
+              message.payload?['match'] is Map,
+        )
         .timeout(const Duration(seconds: 8));
     return message.payload ?? const {};
   }
@@ -381,12 +405,14 @@ class ProbeClient {
   Future<Map<String, dynamic>> expectChangedMatchSnapshot(
     String previousSignature,
   ) async {
-    final message = await _messages.stream.firstWhere((message) {
-      if (message.type != MultiplayerMessageType.roomSnapshot) return false;
-      final match = message.payload?['match'];
-      return match is Map<String, dynamic> &&
-          matchSignature(match) != previousSignature;
-    }).timeout(const Duration(seconds: 8));
+    final message = await _messages.stream
+        .firstWhere((message) {
+          if (message.type != MultiplayerMessageType.roomSnapshot) return false;
+          final match = message.payload?['match'];
+          return match is Map<String, dynamic> &&
+              matchSignature(match) != previousSignature;
+        })
+        .timeout(const Duration(seconds: 8));
     return message.payload ?? const {};
   }
 

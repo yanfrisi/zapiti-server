@@ -70,10 +70,7 @@ void main() {
     });
 
     test('rejects blank player names', () {
-      expect(
-        () => manager.createRoom('   ', 'p1', 'conn1'),
-        throwsStateError,
-      );
+      expect(() => manager.createRoom('   ', 'p1', 'conn1'), throwsStateError);
     });
 
     test('reject join on non-existent room', () {
