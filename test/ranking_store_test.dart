@@ -7,13 +7,13 @@ import 'package:zapiti_server/match_state.dart';
 import 'package:zapiti_server/ranking_store.dart';
 
 void main() {
-  test('RankingStore recupera perfil por usuario y contrasena', () {
+  test('RankingStore recupera perfil por usuario y contrasena', () async {
     final tempDir = Directory.systemTemp.createTempSync('zapiti_profile_test');
     addTearDown(() => tempDir.deleteSync(recursive: true));
     final dbPath = '${tempDir.path}/ranking.sqlite';
     final store = RankingStore(path: dbPath);
 
-    store.upsertPlayerProfile(
+    await store.upsertPlayerProfile(
       playerId: 'juan_profile',
       username: 'juan',
       name: 'Juan',
@@ -21,7 +21,7 @@ void main() {
       teamName: 'Los Bravos',
     );
 
-    final profile = store.recoverPlayerProfile(
+    final profile = await store.recoverPlayerProfile(
       username: 'juan',
       password: 'secreto123',
     );
@@ -34,14 +34,14 @@ void main() {
     expect(profile['sessionToken'], isA<String>());
     expect(profile['teamName'], 'Los Bravos');
     expect(
-      store.verifySessionToken(
+      await store.verifySessionToken(
         playerId: 'juan_profile',
         sessionToken: profile['sessionToken'] as String,
       ),
       isTrue,
     );
 
-    store.close();
+    await store.close();
     final db = sqlite3.open(dbPath);
     final storedPlayer = db.select(
       'SELECT * FROM players WHERE player_id = ?',
@@ -55,13 +55,13 @@ void main() {
     db.dispose();
   });
 
-  test('RankingStore actualiza perfil con token de sesion', () {
+  test('RankingStore actualiza perfil con token de sesion', () async {
     final tempDir = Directory.systemTemp.createTempSync('zapiti_session_test');
     addTearDown(() => tempDir.deleteSync(recursive: true));
     final store = RankingStore(path: '${tempDir.path}/ranking.sqlite');
     addTearDown(store.close);
 
-    final created = store.upsertPlayerProfile(
+    final created = await store.upsertPlayerProfile(
       playerId: 'juan_profile',
       username: 'juan',
       name: 'Juan',
@@ -70,18 +70,18 @@ void main() {
     );
     final token = created!['sessionToken'] as String;
 
-    final updated = store.updatePlayerProfileWithSession(
+    final updated = await store.updatePlayerProfileWithSession(
       playerId: 'juan_profile',
       name: 'Juan Fran',
       teamName: 'Los Finos',
       sessionToken: token,
     );
-    final rejected = store.updatePlayerProfileWithSession(
+    final rejected = await store.updatePlayerProfileWithSession(
       playerId: 'juan_profile',
       name: 'Intruso',
       sessionToken: 'token_malo',
     );
-    final snapshot = store.snapshot();
+    final snapshot = await store.snapshot();
     final player = (snapshot['players'] as List).first as Map;
 
     expect(updated, isNotNull);
@@ -92,20 +92,20 @@ void main() {
     expect(player['sessionToken'], isNull);
   });
 
-  test('RankingStore rechaza usuario existente con otra contrasena', () {
+  test('RankingStore rechaza usuario existente con otra contrasena', () async {
     final tempDir = Directory.systemTemp.createTempSync('zapiti_user_test');
     addTearDown(() => tempDir.deleteSync(recursive: true));
     final store = RankingStore(path: '${tempDir.path}/ranking.sqlite');
     addTearDown(store.close);
 
-    store.upsertPlayerProfile(
+    await store.upsertPlayerProfile(
       playerId: 'juan_profile',
       username: 'juan',
       name: 'Juan',
       password: 'secreto123',
     );
 
-    final rejected = store.upsertPlayerProfile(
+    final rejected = await store.upsertPlayerProfile(
       playerId: 'otro_profile',
       username: 'juan',
       name: 'Otro',
@@ -115,19 +115,19 @@ void main() {
     expect(rejected, isNull);
   });
 
-  test('RankingStore gestiona equipos del jugador', () {
+  test('RankingStore gestiona equipos del jugador', () async {
     final tempDir = Directory.systemTemp.createTempSync('zapiti_team_test');
     addTearDown(() => tempDir.deleteSync(recursive: true));
     final store = RankingStore(path: '${tempDir.path}/ranking.sqlite');
     addTearDown(store.close);
 
-    final juan = store.upsertPlayerProfile(
+    final juan = await store.upsertPlayerProfile(
       playerId: 'juan_profile',
       username: 'juan',
       name: 'Juan',
       password: 'secreto123',
     );
-    store.upsertPlayerProfile(
+    await store.upsertPlayerProfile(
       playerId: 'ana_profile',
       username: 'ana',
       name: 'Ana',
@@ -135,28 +135,28 @@ void main() {
     );
     final token = juan!['sessionToken'] as String;
 
-    final created = store.createTeamForPlayer(
+    final created = await store.createTeamForPlayer(
       playerId: 'juan_profile',
       sessionToken: token,
       teammateUsername: 'ana',
       teamName: 'Los Bravos',
     );
-    final renamed = store.updateTeamName(
+    final renamed = await store.updateTeamName(
       playerId: 'juan_profile',
       sessionToken: token,
       pairId: created!['pairId'] as String,
       teamName: 'Los Finos',
     );
-    final teams = store.teamsForPlayer(
+    final teams = await store.teamsForPlayer(
       playerId: 'juan_profile',
       sessionToken: token,
     );
-    final archived = store.archiveTeam(
+    final archived = await store.archiveTeam(
       playerId: 'juan_profile',
       sessionToken: token,
       pairId: created['pairId'] as String,
     );
-    final activeTeams = store.teamsForPlayer(
+    final activeTeams = await store.teamsForPlayer(
       playerId: 'juan_profile',
       sessionToken: token,
     );
@@ -169,29 +169,33 @@ void main() {
     expect(activeTeams, isEmpty);
   });
 
-  test('RankingStore importa JSON antiguo y hashea PIN en claro', () {
-    final tempDir = Directory.systemTemp.createTempSync('zapiti_legacy_pin_test');
+  test('RankingStore importa JSON antiguo y hashea PIN en claro', () async {
+    final tempDir = Directory.systemTemp.createTempSync(
+      'zapiti_legacy_pin_test',
+    );
     addTearDown(() => tempDir.deleteSync(recursive: true));
     final legacyFile = File('${tempDir.path}/ranking.json')
       ..createSync(recursive: true)
-      ..writeAsStringSync(jsonEncode({
-        'players': {
-          'legacy_profile': {
-            'playerId': 'legacy_profile',
-            'name': 'Legacy',
-            'pin': '4444',
-            'played': 0,
-            'wins': 0,
-            'losses': 0,
+      ..writeAsStringSync(
+        jsonEncode({
+          'players': {
+            'legacy_profile': {
+              'playerId': 'legacy_profile',
+              'name': 'Legacy',
+              'pin': '4444',
+              'played': 0,
+              'wins': 0,
+              'losses': 0,
+            },
           },
-        },
-        'pairs': {},
-        'matches': [],
-      }));
+          'pairs': {},
+          'matches': [],
+        }),
+      );
     final dbPath = '${tempDir.path}/ranking.sqlite';
     final store = RankingStore(path: dbPath, legacyJsonPath: legacyFile.path);
 
-    final profile = store.recoverPlayerProfile(
+    final profile = await store.recoverPlayerProfile(
       username: 'legacy',
       password: '4444',
     );
@@ -199,7 +203,7 @@ void main() {
     expect(profile, isNotNull);
     expect(profile!['playerId'], 'legacy_profile');
     expect(profile['pin'], isNull);
-    store.close();
+    await store.close();
     final db = sqlite3.open(dbPath);
     final storedPlayer = db.select(
       'SELECT * FROM players WHERE player_id = ?',
@@ -210,18 +214,18 @@ void main() {
     db.dispose();
   });
 
-  test('RankingStore registra jugadores y pareja humana', () {
+  test('RankingStore registra jugadores y pareja humana', () async {
     final tempDir = Directory.systemTemp.createTempSync('zapiti_ranking_test');
     addTearDown(() => tempDir.deleteSync(recursive: true));
     final store = RankingStore(path: '${tempDir.path}/ranking.sqlite');
-    store.upsertPlayerProfile(
+    await store.upsertPlayerProfile(
       playerId: 'juan_profile',
       username: 'juan',
       name: 'Juan',
       password: 'secreto123',
       teamName: 'Los Bravos',
     );
-    store.upsertPlayerProfile(
+    await store.upsertPlayerProfile(
       playerId: 'ana_profile',
       username: 'ana',
       name: 'Ana',
@@ -269,9 +273,9 @@ void main() {
     match.score[1] = 30;
     match.score[2] = 12;
     match.winningTeamId = 1;
-    store.recordFinishedMatch(match);
+    await store.recordFinishedMatch(match);
 
-    final snapshot = store.snapshot();
+    final snapshot = await store.snapshot();
     final pairs = snapshot['pairs'] as List<dynamic>;
     final players = snapshot['players'] as List<dynamic>;
     expect(pairs, isNotEmpty);
@@ -281,6 +285,6 @@ void main() {
     expect(players.first['pin'], isNull);
     expect(players.first['favoritePair'], 'Los Bravos');
     expect(players.first['pointsFor'], 30);
-    store.close();
+    await store.close();
   });
 }

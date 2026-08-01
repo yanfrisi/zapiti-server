@@ -253,7 +253,8 @@ class Room {
       seats: List.from(_seats),
       phase: _phase,
       createdAt: createdAt,
-      match: _match?.toPublicJson() ??
+      match:
+          _match?.toPublicJson() ??
           (allowPassHand ? {'allowPassHand': allowPassHand} : null),
     );
   }

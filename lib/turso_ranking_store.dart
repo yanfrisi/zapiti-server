@@ -3,77 +3,110 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
-import 'package:sqlite3/sqlite3.dart';
+import 'package:libsql_dart/libsql_dart.dart';
 
 import 'match_state.dart';
 import 'ranking_repository.dart';
 
-class RankingStore implements RankingRepository {
+class TursoRankingStore implements RankingRepository {
+  static const databaseUrlEnv = 'TURSO_DATABASE_URL';
+  static const authTokenEnv = 'TURSO_AUTH_TOKEN';
+
   static const _pinHashAlgorithm = 'pbkdf2_sha256';
   static const _pinHashIterations = 120000;
   static const _pinSaltLength = 16;
   static const _pinHashLength = 32;
   static const _sessionTokenLength = 32;
 
-  final File file;
-  final File legacyJsonFile;
-  late final Database _db;
+  final LibsqlClient _client;
 
-  RankingStore({String? path, String? legacyJsonPath})
-    : file = File(path ?? 'data/zapiti_ranking.sqlite'),
-      legacyJsonFile = File(legacyJsonPath ?? 'data/zapiti_ranking.json') {
-    file.parent.createSync(recursive: true);
-    _db = sqlite3.open(file.path);
-    _ensureSchema();
-    _migrateLegacyJsonIfNeeded();
+  TursoRankingStore._(this._client);
+
+  static Future<TursoRankingStore> open({
+    String? databaseUrl,
+    String? authToken,
+    Map<String, String>? environment,
+  }) async {
+    final env = environment ?? Platform.environment;
+    final resolvedUrl = (databaseUrl ?? env[databaseUrlEnv] ?? '').trim();
+    final resolvedToken = (authToken ?? env[authTokenEnv] ?? '').trim();
+
+    if (resolvedUrl.isEmpty) {
+      throw StateError(
+        'Missing required environment variable $databaseUrlEnv.',
+      );
+    }
+    if (resolvedToken.isEmpty) {
+      throw StateError('Missing required environment variable $authTokenEnv.');
+    }
+
+    final client = LibsqlClient.remote(resolvedUrl, authToken: resolvedToken);
+
+    try {
+      await client.connect();
+      final rows = await client.query('SELECT 1 AS ok');
+      if (rows.isEmpty || rows.first['ok']?.toString() != '1') {
+        throw StateError(
+          'Turso connectivity check returned an invalid result.',
+        );
+      }
+      final store = TursoRankingStore._(client);
+      await store._ensureSchema();
+      return store;
+    } catch (error) {
+      await client.dispose();
+      throw StateError(
+        'Could not connect to Turso or initialize schema: $error',
+      );
+    }
   }
 
   @override
-  Future<void> close() async => _db.dispose();
+  Future<void> close() => _client.dispose();
 
   @override
   Future<Map<String, dynamic>> snapshot({int limit = 20}) async {
-    final pairs = [
-      for (final row in _db.select(
-        '''
-        SELECT *
-        FROM pairs
-        WHERE archived_at = 0
-        ORDER BY wins DESC, points_for DESC, team_name ASC
-        LIMIT ?
-        ''',
-        [limit],
-      ))
-        _pairFromRow(row),
-    ];
-    final allPairs = [
-      for (final row in _db.select('SELECT * FROM pairs WHERE archived_at = 0'))
-        _pairFromRow(row),
-    ];
+    final pairRows = await _client.query(
+      '''
+      SELECT *
+      FROM pairs
+      WHERE archived_at = 0
+      ORDER BY wins DESC, points_for DESC, team_name ASC
+      LIMIT ?
+      ''',
+      positional: [limit],
+    );
+    final pairs = [for (final row in pairRows) _pairFromRow(row)];
+
+    final allPairRows = await _client.query(
+      'SELECT * FROM pairs WHERE archived_at = 0',
+    );
+    final allPairs = [for (final row in allPairRows) _pairFromRow(row)];
+
+    final playerRows = await _client.query(
+      '''
+      SELECT *
+      FROM players
+      ORDER BY wins DESC, played DESC, name ASC
+      LIMIT ?
+      ''',
+      positional: [limit],
+    );
     final players = [
-      for (final row in _db.select(
-        '''
-        SELECT *
-        FROM players
-        ORDER BY wins DESC, played DESC, name ASC
-        LIMIT ?
-        ''',
-        [limit],
-      ))
+      for (final row in playerRows)
         _publicPlayerStats(_playerFromRow(row), allPairs),
     ];
-    final matches = [
-      for (final row in _db.select(
-        '''
-        SELECT *
-        FROM matches
-        ORDER BY finished_at DESC
-        LIMIT ?
-        ''',
-        [limit],
-      ))
-        _matchFromRow(row),
-    ];
+
+    final matchRows = await _client.query(
+      '''
+      SELECT *
+      FROM matches
+      ORDER BY finished_at DESC
+      LIMIT ?
+      ''',
+      positional: [limit],
+    );
+    final matches = [for (final row in matchRows) _matchFromRow(row)];
 
     return {'pairs': pairs, 'players': players, 'matches': matches};
   }
@@ -88,7 +121,7 @@ class RankingStore implements RankingRepository {
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final normalizedUsername = _normalizeUsername(username);
-    final existingByUsername = _playerByUsername(normalizedUsername);
+    final existingByUsername = await _playerByUsername(normalizedUsername);
     if (existingByUsername != null &&
         existingByUsername['playerId']?.toString() != playerId) {
       if (!_passwordMatches(existingByUsername, password)) {
@@ -97,7 +130,7 @@ class RankingStore implements RankingRepository {
       playerId = existingByUsername['playerId']?.toString() ?? playerId;
     }
     final current =
-        _playerById(playerId) ??
+        await _playerById(playerId) ??
         <String, dynamic>{
           'playerId': playerId,
           'createdAt': now,
@@ -116,7 +149,7 @@ class RankingStore implements RankingRepository {
     current['updatedAt'] = now;
     _setPasswordHash(current, password);
     final sessionToken = _issueSessionToken(current);
-    _upsertPlayerRow(current);
+    await _upsertPlayerRow(current);
     return _publicProfile(current, sessionToken: sessionToken);
   }
 
@@ -125,7 +158,7 @@ class RankingStore implements RankingRepository {
     required String username,
     required String password,
   }) async {
-    final player = _playerByUsername(_normalizeUsername(username));
+    final player = await _playerByUsername(_normalizeUsername(username));
     if (player == null || !_passwordMatches(player, password)) {
       return null;
     }
@@ -133,7 +166,7 @@ class RankingStore implements RankingRepository {
       _setPasswordHash(player, password);
     }
     final sessionToken = _issueSessionToken(player);
-    _upsertPlayerRow(player);
+    await _upsertPlayerRow(player);
     return _publicProfile(player, sessionToken: sessionToken);
   }
 
@@ -144,7 +177,7 @@ class RankingStore implements RankingRepository {
     required String sessionToken,
     String teamName = '',
   }) async {
-    final player = _playerById(playerId);
+    final player = await _playerById(playerId);
     if (player == null || !_sessionTokenMatches(player, sessionToken)) {
       return null;
     }
@@ -152,7 +185,7 @@ class RankingStore implements RankingRepository {
     player['name'] = name;
     player['teamName'] = teamName;
     player['updatedAt'] = DateTime.now().millisecondsSinceEpoch;
-    _upsertPlayerRow(player);
+    await _upsertPlayerRow(player);
     return _publicProfile(player, sessionToken: sessionToken);
   }
 
@@ -161,7 +194,7 @@ class RankingStore implements RankingRepository {
     required String playerId,
     required String sessionToken,
   }) async {
-    final player = _playerById(playerId);
+    final player = await _playerById(playerId);
     return player != null && _sessionTokenMatches(player, sessionToken);
   }
 
@@ -171,12 +204,12 @@ class RankingStore implements RankingRepository {
     required String sessionToken,
     bool includeArchived = false,
   }) async {
-    final player = _playerById(playerId);
+    final player = await _playerById(playerId);
     if (player == null || !_sessionTokenMatches(player, sessionToken)) {
       return const [];
     }
 
-    final rows = _db.select(
+    final rows = await _client.query(
       includeArchived
           ? '''
             SELECT *
@@ -190,13 +223,16 @@ class RankingStore implements RankingRepository {
             WHERE player_ids_json LIKE ? AND archived_at = 0
             ORDER BY wins DESC, played DESC, team_name ASC
             ''',
-      ['%$playerId%'],
+      positional: ['%$playerId%'],
     );
-    return [
-      for (final row in rows)
-        if (_pairContainsPlayer(_pairFromRow(row), playerId))
-          _publicTeam(_pairFromRow(row), playerId),
-    ];
+    final teams = <Map<String, dynamic>>[];
+    for (final row in rows) {
+      final pair = _pairFromRow(row);
+      if (_pairContainsPlayer(pair, playerId)) {
+        teams.add(await _publicTeam(pair, playerId));
+      }
+    }
+    return teams;
   }
 
   @override
@@ -206,11 +242,13 @@ class RankingStore implements RankingRepository {
     required String teammateUsername,
     required String teamName,
   }) async {
-    final player = _playerById(playerId);
+    final player = await _playerById(playerId);
     if (player == null || !_sessionTokenMatches(player, sessionToken)) {
       return null;
     }
-    final teammate = _playerByUsername(_normalizeUsername(teammateUsername));
+    final teammate = await _playerByUsername(
+      _normalizeUsername(teammateUsername),
+    );
     if (teammate == null ||
         teammate['playerId']?.toString() == player['playerId']?.toString()) {
       return null;
@@ -223,7 +261,7 @@ class RankingStore implements RankingRepository {
     final pairId = playerIds.join('+');
     final now = DateTime.now().millisecondsSinceEpoch;
     final current =
-        _pairById(pairId) ??
+        await _pairById(pairId) ??
         <String, dynamic>{
           'pairId': pairId,
           'playerIds': playerIds,
@@ -239,7 +277,7 @@ class RankingStore implements RankingRepository {
         : teamName;
     current['updatedAt'] = now;
     current['archivedAt'] = 0;
-    _upsertPairRow(current);
+    await _upsertPairRow(current);
     return _publicTeam(current, playerId);
   }
 
@@ -250,8 +288,8 @@ class RankingStore implements RankingRepository {
     required String pairId,
     required String teamName,
   }) async {
-    final player = _playerById(playerId);
-    final pair = _pairById(pairId);
+    final player = await _playerById(playerId);
+    final pair = await _pairById(pairId);
     if (player == null ||
         pair == null ||
         !_sessionTokenMatches(player, sessionToken) ||
@@ -261,7 +299,7 @@ class RankingStore implements RankingRepository {
 
     pair['teamName'] = teamName;
     pair['updatedAt'] = DateTime.now().millisecondsSinceEpoch;
-    _upsertPairRow(pair);
+    await _upsertPairRow(pair);
     return _publicTeam(pair, playerId);
   }
 
@@ -271,8 +309,8 @@ class RankingStore implements RankingRepository {
     required String sessionToken,
     required String pairId,
   }) async {
-    final player = _playerById(playerId);
-    final pair = _pairById(pairId);
+    final player = await _playerById(playerId);
+    final pair = await _pairById(pairId);
     if (player == null ||
         pair == null ||
         !_sessionTokenMatches(player, sessionToken) ||
@@ -282,7 +320,7 @@ class RankingStore implements RankingRepository {
 
     pair['archivedAt'] = DateTime.now().millisecondsSinceEpoch;
     pair['updatedAt'] = pair['archivedAt'];
-    _upsertPairRow(pair);
+    await _upsertPairRow(pair);
     return _publicTeam(pair, playerId);
   }
 
@@ -292,8 +330,8 @@ class RankingStore implements RankingRepository {
     required String sessionToken,
     required String pairId,
   }) async {
-    final player = _playerById(playerId);
-    final pair = _pairById(pairId);
+    final player = await _playerById(playerId);
+    final pair = await _pairById(pairId);
     if (player == null ||
         pair == null ||
         !_sessionTokenMatches(player, sessionToken) ||
@@ -311,12 +349,48 @@ class RankingStore implements RankingRepository {
 
     final finishedAt = DateTime.now().millisecondsSinceEpoch;
     final teamIds = match.players.map((player) => player.teamId).toSet();
+    final matchId = '${match.roomId}_${match.seed}';
 
-    _db.execute('BEGIN IMMEDIATE');
+    final tx = await _client.transaction(
+      behavior: LibsqlTransactionBehavior.immediate,
+    );
     try {
+      final inserted = await tx.execute(
+        '''
+        INSERT INTO matches (
+          match_id, room_id, finished_at, winner_team_id, score_json, teams_json
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(match_id) DO NOTHING
+        ''',
+        positional: [
+          matchId,
+          match.roomId,
+          finishedAt,
+          winnerTeamId,
+          jsonEncode({'1': match.score[1], '2': match.score[2]}),
+          jsonEncode({
+            for (final teamId in teamIds)
+              '$teamId': match.players
+                  .where((player) => player.teamId == teamId)
+                  .map(
+                    (player) => {
+                      'playerId': player.playerId,
+                      'name': player.name,
+                      'isBot': player.isBot,
+                    },
+                  )
+                  .toList(),
+          }),
+        ],
+      );
+      if (inserted == 0) {
+        await tx.rollback();
+        return;
+      }
+
       for (final player in match.players.where((player) => !player.isBot)) {
         final stats =
-            _playerById(player.playerId) ??
+            await _playerByIdInTransaction(tx, player.playerId) ??
             <String, dynamic>{
               'playerId': player.playerId,
               'name': player.name,
@@ -342,7 +416,7 @@ class RankingStore implements RankingRepository {
         stats['pointsAgainst'] =
             _asInt(stats['pointsAgainst']) +
             _opponentScore(teamIds, match.score, player.teamId);
-        _upsertPlayerRow(stats);
+        await _upsertPlayerRowInTransaction(tx, stats);
       }
 
       for (final teamId in teamIds) {
@@ -351,12 +425,15 @@ class RankingStore implements RankingRepository {
             .toList();
         if (humanTeamPlayers.isEmpty) continue;
 
-        final explicitPair = _explicitPairForTeam(humanTeamPlayers);
+        final explicitPair = await _explicitPairForTeamInTransaction(
+          tx,
+          humanTeamPlayers,
+        );
         final pairId =
             explicitPair?['pairId']?.toString() ?? _pairId(humanTeamPlayers);
         final pairStats =
             explicitPair ??
-            _pairById(pairId) ??
+            await _pairByIdInTransaction(tx, pairId) ??
             <String, dynamic>{
               'pairId': pairId,
               'playerIds': humanTeamPlayers
@@ -371,7 +448,7 @@ class RankingStore implements RankingRepository {
             };
         pairStats['teamName'] =
             explicitPair?['teamName']?.toString() ??
-            _teamName(humanTeamPlayers);
+            await _teamNameInTransaction(tx, humanTeamPlayers);
         pairStats['updatedAt'] = finishedAt;
         pairStats['played'] = _asInt(pairStats['played']) + 1;
         if (teamId == winnerTeamId) {
@@ -384,52 +461,25 @@ class RankingStore implements RankingRepository {
         pairStats['pointsAgainst'] =
             _asInt(pairStats['pointsAgainst']) +
             _opponentScore(teamIds, match.score, teamId);
-        _upsertPairRow(pairStats);
+        await _upsertPairRowInTransaction(tx, pairStats);
       }
 
-      _db.execute(
-        '''
-        INSERT OR REPLACE INTO matches (
-          match_id, room_id, finished_at, winner_team_id, score_json, teams_json
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        ''',
-        [
-          '${match.roomId}_${match.seed}',
-          match.roomId,
-          finishedAt,
-          winnerTeamId,
-          jsonEncode({'1': match.score[1], '2': match.score[2]}),
-          jsonEncode({
-            for (final teamId in teamIds)
-              '$teamId': match.players
-                  .where((player) => player.teamId == teamId)
-                  .map(
-                    (player) => {
-                      'playerId': player.playerId,
-                      'name': player.name,
-                      'isBot': player.isBot,
-                    },
-                  )
-                  .toList(),
-          }),
-        ],
-      );
-      _db.execute('COMMIT');
+      await tx.commit();
     } catch (_) {
-      _db.execute('ROLLBACK');
+      await tx.rollback();
       rethrow;
     }
   }
 
-  void _ensureSchema() {
-    _db.execute('PRAGMA foreign_keys = ON');
-    _db.execute('''
+  Future<void> _ensureSchema() async {
+    await _client.execute('PRAGMA foreign_keys = ON');
+    await _client.execute('''
       CREATE TABLE IF NOT EXISTS metadata (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       )
     ''');
-    _db.execute('''
+    await _client.execute('''
       CREATE TABLE IF NOT EXISTS players (
         player_id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -452,18 +502,22 @@ class RankingStore implements RankingRepository {
         points_against INTEGER NOT NULL DEFAULT 0
       )
     ''');
-    _ensureColumn('players', 'username', "TEXT NOT NULL DEFAULT ''");
-    _ensureColumn('players', 'session_token_hash', "TEXT NOT NULL DEFAULT ''");
-    _ensureColumn(
+    await _ensureColumn('players', 'username', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+      'players',
+      'session_token_hash',
+      "TEXT NOT NULL DEFAULT ''",
+    );
+    await _ensureColumn(
       'players',
       'session_token_issued_at',
       'INTEGER NOT NULL DEFAULT 0',
     );
-    _db.execute(
+    await _client.execute(
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_players_username_unique "
       "ON players(username) WHERE username <> ''",
     );
-    _db.execute('''
+    await _client.execute('''
       CREATE TABLE IF NOT EXISTS pairs (
         pair_id TEXT PRIMARY KEY,
         player_ids_json TEXT NOT NULL,
@@ -478,8 +532,8 @@ class RankingStore implements RankingRepository {
         archived_at INTEGER NOT NULL DEFAULT 0
       )
     ''');
-    _ensureColumn('pairs', 'archived_at', 'INTEGER NOT NULL DEFAULT 0');
-    _db.execute('''
+    await _ensureColumn('pairs', 'archived_at', 'INTEGER NOT NULL DEFAULT 0');
+    await _client.execute('''
       CREATE TABLE IF NOT EXISTS matches (
         match_id TEXT PRIMARY KEY,
         room_id TEXT NOT NULL,
@@ -491,164 +545,178 @@ class RankingStore implements RankingRepository {
     ''');
   }
 
-  void _migrateLegacyJsonIfNeeded() {
-    if (!legacyJsonFile.existsSync()) return;
-    if (_metadataValue('legacy_json_migrated') == legacyJsonFile.path) return;
-    final hasData =
-        (_db.select('SELECT COUNT(*) AS total FROM players').first['total']
-            as int) >
-        0;
-    if (hasData) {
-      _setMetadataValue('legacy_json_migrated', legacyJsonFile.path);
-      return;
-    }
-
-    final decoded = jsonDecode(legacyJsonFile.readAsStringSync());
-    if (decoded is! Map) return;
-    final data = Map<String, dynamic>.from(decoded);
-    final players = _asStringMap(data['players']) ?? const <String, dynamic>{};
-    final pairs = _asStringMap(data['pairs']) ?? const <String, dynamic>{};
-    final matches = data['matches'] as List<dynamic>? ?? const [];
-
-    _db.execute('BEGIN IMMEDIATE');
-    try {
-      for (final entry in players.values) {
-        final player = _asStringMap(entry);
-        if (player == null) continue;
-        final legacyPin = player['pin']?.toString();
-        if (legacyPin != null && legacyPin.isNotEmpty) {
-          player['username'] = _normalizeUsername(
-            player['username']?.toString() ??
-                player['name']?.toString() ??
-                player['playerId']?.toString() ??
-                '',
-          );
-          _setPasswordHash(player, legacyPin);
-        }
-        _upsertPlayerRow(player);
-      }
-      for (final entry in pairs.values) {
-        final pair = _asStringMap(entry);
-        if (pair == null) continue;
-        _upsertPairRow(pair);
-      }
-      for (final entry in matches) {
-        final match = _asStringMap(entry);
-        if (match == null) continue;
-        _upsertLegacyMatchRow(match);
-      }
-      _setMetadataValue('legacy_json_migrated', legacyJsonFile.path);
-      _db.execute('COMMIT');
-    } catch (_) {
-      _db.execute('ROLLBACK');
-      rethrow;
+  Future<void> _ensureColumn(
+    String table,
+    String column,
+    String definition,
+  ) async {
+    final columns = await _client.query('PRAGMA table_info($table)');
+    final exists = columns.any((row) => row['name'] == column);
+    if (!exists) {
+      await _client.execute(
+        'ALTER TABLE $table ADD COLUMN $column $definition',
+      );
     }
   }
 
-  Map<String, dynamic>? _playerById(String playerId) {
-    final result = _db.select(
+  Future<Map<String, dynamic>?> _playerById(String playerId) async {
+    final result = await _client.query(
       'SELECT * FROM players WHERE player_id = ? LIMIT 1',
-      [playerId],
+      positional: [playerId],
     );
     if (result.isEmpty) return null;
     return _playerFromRow(result.first);
   }
 
-  Map<String, dynamic>? _playerByUsername(String username) {
-    final result = _db.select(
+  Future<Map<String, dynamic>?> _playerByUsername(String username) async {
+    final result = await _client.query(
       'SELECT * FROM players WHERE username = ? LIMIT 1',
-      [username],
+      positional: [username],
     );
     if (result.isEmpty) return null;
     return _playerFromRow(result.first);
   }
 
-  Map<String, dynamic>? _pairById(String pairId) {
-    final result = _db.select('SELECT * FROM pairs WHERE pair_id = ? LIMIT 1', [
-      pairId,
-    ]);
+  Future<Map<String, dynamic>?> _pairById(String pairId) async {
+    final result = await _client.query(
+      'SELECT * FROM pairs WHERE pair_id = ? LIMIT 1',
+      positional: [pairId],
+    );
     if (result.isEmpty) return null;
     return _pairFromRow(result.first);
   }
 
-  void _upsertPlayerRow(Map<String, dynamic> player) {
-    _db.execute(
-      '''
-      INSERT OR REPLACE INTO players (
-        player_id, name, team_name, pin_hash_algorithm, pin_hash_iterations,
-        pin_salt, pin_hash, pin_updated_at, username, session_token_hash,
-        session_token_issued_at, created_at, updated_at, last_played_at,
-        played, wins, losses, points_for, points_against
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ''',
-      [
-        player['playerId']?.toString() ?? '',
-        player['name']?.toString() ?? 'Jugador',
-        player['teamName']?.toString() ?? '',
-        player['pinHashAlgorithm']?.toString() ?? '',
-        _asInt(player['pinHashIterations']),
-        player['pinSalt']?.toString() ?? '',
-        player['pinHash']?.toString() ?? '',
-        _asInt(player['pinUpdatedAt']),
-        player['username']?.toString() ?? '',
-        player['sessionTokenHash']?.toString() ?? '',
-        _asInt(player['sessionTokenIssuedAt']),
-        _asInt(player['createdAt']),
-        _asInt(player['updatedAt']),
-        _asInt(player['lastPlayedAt']),
-        _asInt(player['played']),
-        _asInt(player['wins']),
-        _asInt(player['losses']),
-        _asInt(player['pointsFor']),
-        _asInt(player['pointsAgainst']),
-      ],
+  Future<Map<String, dynamic>?> _playerByIdInTransaction(
+    dynamic tx,
+    String playerId,
+  ) async {
+    final result = await tx.query(
+      'SELECT * FROM players WHERE player_id = ? LIMIT 1',
+      positional: [playerId],
     );
+    if (result.isEmpty) return null;
+    return _playerFromRow(result.first);
   }
 
-  void _upsertPairRow(Map<String, dynamic> pair) {
-    _db.execute(
-      '''
-      INSERT OR REPLACE INTO pairs (
-        pair_id, player_ids_json, team_name, played, wins, losses,
-        points_for, points_against, created_at, updated_at, archived_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ''',
-      [
-        pair['pairId']?.toString() ?? '',
-        jsonEncode(pair['playerIds'] as List<dynamic>? ?? const []),
-        pair['teamName']?.toString() ?? 'Pareja',
-        _asInt(pair['played']),
-        _asInt(pair['wins']),
-        _asInt(pair['losses']),
-        _asInt(pair['pointsFor']),
-        _asInt(pair['pointsAgainst']),
-        _asInt(pair['createdAt']),
-        _asInt(pair['updatedAt']),
-        _asInt(pair['archivedAt']),
-      ],
+  Future<Map<String, dynamic>?> _pairByIdInTransaction(
+    dynamic tx,
+    String pairId,
+  ) async {
+    final result = await tx.query(
+      'SELECT * FROM pairs WHERE pair_id = ? LIMIT 1',
+      positional: [pairId],
     );
+    if (result.isEmpty) return null;
+    return _pairFromRow(result.first);
   }
 
-  void _upsertLegacyMatchRow(Map<String, dynamic> match) {
-    _db.execute(
-      '''
-      INSERT OR REPLACE INTO matches (
-        match_id, room_id, finished_at, winner_team_id, score_json, teams_json
-      ) VALUES (?, ?, ?, ?, ?, ?)
-      ''',
-      [
-        match['matchId']?.toString() ??
-            '${match['roomId']}_${match['finishedAt']}',
-        match['roomId']?.toString() ?? '',
-        _asInt(match['finishedAt']),
-        _asInt(match['winnerTeamId']),
-        jsonEncode(match['score'] ?? const {}),
-        jsonEncode(match['teams'] ?? const {}),
-      ],
-    );
+  Future<void> _upsertPlayerRow(Map<String, dynamic> player) async {
+    await _client.execute(_upsertPlayerSql, positional: _playerValues(player));
   }
 
-  Map<String, dynamic> _playerFromRow(Row row) {
+  Future<void> _upsertPlayerRowInTransaction(
+    dynamic tx,
+    Map<String, dynamic> player,
+  ) async {
+    await tx.execute(_upsertPlayerSql, positional: _playerValues(player));
+  }
+
+  Future<void> _upsertPairRow(Map<String, dynamic> pair) async {
+    await _client.execute(_upsertPairSql, positional: _pairValues(pair));
+  }
+
+  Future<void> _upsertPairRowInTransaction(
+    dynamic tx,
+    Map<String, dynamic> pair,
+  ) async {
+    await tx.execute(_upsertPairSql, positional: _pairValues(pair));
+  }
+
+  static const _upsertPlayerSql = '''
+    INSERT INTO players (
+      player_id, name, team_name, pin_hash_algorithm, pin_hash_iterations,
+      pin_salt, pin_hash, pin_updated_at, username, session_token_hash,
+      session_token_issued_at, created_at, updated_at, last_played_at,
+      played, wins, losses, points_for, points_against
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(player_id) DO UPDATE SET
+      name = excluded.name,
+      team_name = excluded.team_name,
+      pin_hash_algorithm = excluded.pin_hash_algorithm,
+      pin_hash_iterations = excluded.pin_hash_iterations,
+      pin_salt = excluded.pin_salt,
+      pin_hash = excluded.pin_hash,
+      pin_updated_at = excluded.pin_updated_at,
+      username = excluded.username,
+      session_token_hash = excluded.session_token_hash,
+      session_token_issued_at = excluded.session_token_issued_at,
+      updated_at = excluded.updated_at,
+      last_played_at = excluded.last_played_at,
+      played = excluded.played,
+      wins = excluded.wins,
+      losses = excluded.losses,
+      points_for = excluded.points_for,
+      points_against = excluded.points_against
+    ''';
+
+  static const _upsertPairSql = '''
+    INSERT INTO pairs (
+      pair_id, player_ids_json, team_name, played, wins, losses,
+      points_for, points_against, created_at, updated_at, archived_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(pair_id) DO UPDATE SET
+      player_ids_json = excluded.player_ids_json,
+      team_name = excluded.team_name,
+      played = excluded.played,
+      wins = excluded.wins,
+      losses = excluded.losses,
+      points_for = excluded.points_for,
+      points_against = excluded.points_against,
+      updated_at = excluded.updated_at,
+      archived_at = excluded.archived_at
+    ''';
+
+  List<dynamic> _playerValues(Map<String, dynamic> player) {
+    return [
+      player['playerId']?.toString() ?? '',
+      player['name']?.toString() ?? 'Jugador',
+      player['teamName']?.toString() ?? '',
+      player['pinHashAlgorithm']?.toString() ?? '',
+      _asInt(player['pinHashIterations']),
+      player['pinSalt']?.toString() ?? '',
+      player['pinHash']?.toString() ?? '',
+      _asInt(player['pinUpdatedAt']),
+      player['username']?.toString() ?? '',
+      player['sessionTokenHash']?.toString() ?? '',
+      _asInt(player['sessionTokenIssuedAt']),
+      _asInt(player['createdAt']),
+      _asInt(player['updatedAt']),
+      _asInt(player['lastPlayedAt']),
+      _asInt(player['played']),
+      _asInt(player['wins']),
+      _asInt(player['losses']),
+      _asInt(player['pointsFor']),
+      _asInt(player['pointsAgainst']),
+    ];
+  }
+
+  List<dynamic> _pairValues(Map<String, dynamic> pair) {
+    return [
+      pair['pairId']?.toString() ?? '',
+      jsonEncode(pair['playerIds'] as List<dynamic>? ?? const []),
+      pair['teamName']?.toString() ?? 'Pareja',
+      _asInt(pair['played']),
+      _asInt(pair['wins']),
+      _asInt(pair['losses']),
+      _asInt(pair['pointsFor']),
+      _asInt(pair['pointsAgainst']),
+      _asInt(pair['createdAt']),
+      _asInt(pair['updatedAt']),
+      _asInt(pair['archivedAt']),
+    ];
+  }
+
+  Map<String, dynamic> _playerFromRow(Map<String, dynamic> row) {
     return {
       'playerId': row['player_id'],
       'name': row['name'],
@@ -672,7 +740,7 @@ class RankingStore implements RankingRepository {
     };
   }
 
-  Map<String, dynamic> _pairFromRow(Row row) {
+  Map<String, dynamic> _pairFromRow(Map<String, dynamic> row) {
     return {
       'pairId': row['pair_id'],
       'playerIds': jsonDecode(row['player_ids_json'] as String),
@@ -688,7 +756,7 @@ class RankingStore implements RankingRepository {
     };
   }
 
-  Map<String, dynamic> _matchFromRow(Row row) {
+  Map<String, dynamic> _matchFromRow(Map<String, dynamic> row) {
     return {
       'matchId': row['match_id'],
       'roomId': row['room_id'],
@@ -697,30 +765,6 @@ class RankingStore implements RankingRepository {
       'score': jsonDecode(row['score_json'] as String),
       'teams': jsonDecode(row['teams_json'] as String),
     };
-  }
-
-  String? _metadataValue(String key) {
-    final result = _db.select(
-      'SELECT value FROM metadata WHERE key = ? LIMIT 1',
-      [key],
-    );
-    if (result.isEmpty) return null;
-    return result.first['value']?.toString();
-  }
-
-  void _setMetadataValue(String key, String value) {
-    _db.execute('INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)', [
-      key,
-      value,
-    ]);
-  }
-
-  void _ensureColumn(String table, String column, String definition) {
-    final columns = _db.select('PRAGMA table_info($table)');
-    final exists = columns.any((row) => row['name'] == column);
-    if (!exists) {
-      _db.execute('ALTER TABLE $table ADD COLUMN $column $definition');
-    }
   }
 
   int _opponentScore(Set<int> teamIds, Map<int, int> score, int teamId) {
@@ -732,13 +776,9 @@ class RankingStore implements RankingRepository {
 
   int _asInt(Object? value) {
     if (value is int) return value;
+    if (value is BigInt) return value.toInt();
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? 0;
-  }
-
-  Map<String, dynamic>? _asStringMap(Object? value) {
-    if (value is! Map) return null;
-    return Map<String, dynamic>.from(value);
   }
 
   Map<String, dynamic> _publicProfile(
@@ -905,17 +945,19 @@ class RankingStore implements RankingRepository {
         playerIds.map((entry) => entry.toString()).contains(playerId);
   }
 
-  Map<String, dynamic> _publicTeam(
+  Future<Map<String, dynamic>> _publicTeam(
     Map<String, dynamic> pair,
     String localPlayerId,
-  ) {
+  ) async {
     final playerIds = (pair['playerIds'] as List<dynamic>? ?? const [])
         .map((entry) => entry.toString())
         .toList();
-    final teammates = [
-      for (final memberId in playerIds)
-        if (memberId != localPlayerId) _playerById(memberId),
-    ].whereType<Map<String, dynamic>>().toList();
+    final teammates = <Map<String, dynamic>>[];
+    for (final memberId in playerIds) {
+      if (memberId == localPlayerId) continue;
+      final teammate = await _playerById(memberId);
+      if (teammate != null) teammates.add(teammate);
+    }
     return {
       ...pair,
       'teammateIds': [for (final teammate in teammates) teammate['playerId']],
@@ -926,7 +968,10 @@ class RankingStore implements RankingRepository {
     };
   }
 
-  Map<String, dynamic>? _explicitPairForTeam(List<MatchPlayer> players) {
+  Future<Map<String, dynamic>?> _explicitPairForTeamInTransaction(
+    dynamic tx,
+    List<MatchPlayer> players,
+  ) async {
     final humanIds = players.map((player) => player.playerId).toSet();
     final pairIds = players
         .map((player) => player.pairId?.trim() ?? '')
@@ -934,7 +979,7 @@ class RankingStore implements RankingRepository {
         .toSet();
 
     for (final pairId in pairIds) {
-      final pair = _pairById(pairId);
+      final pair = await _pairByIdInTransaction(tx, pairId);
       final rawPlayerIds = pair?['playerIds'];
       if (pair == null || rawPlayerIds is! List) continue;
       final storedIds = rawPlayerIds.map((entry) => entry.toString()).toSet();
@@ -950,9 +995,12 @@ class RankingStore implements RankingRepository {
     return ids.join('+');
   }
 
-  String _teamName(List<MatchPlayer> players) {
+  Future<String> _teamNameInTransaction(
+    dynamic tx,
+    List<MatchPlayer> players,
+  ) async {
     for (final player in players) {
-      final profile = _playerById(player.playerId);
+      final profile = await _playerByIdInTransaction(tx, player.playerId);
       final teamName = profile?['teamName']?.toString().trim() ?? '';
       if (teamName.isNotEmpty) return teamName;
     }

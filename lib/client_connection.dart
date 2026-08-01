@@ -28,28 +28,45 @@ class ClientConnection {
 
   /// Iniciar a escuchar mensajes
   void startListening(
-    Function(String connectionId, MultiplayerMessage message) onMessage,
-    Function(String connectionId) onDisconnect,
+    FutureOr<void> Function(String connectionId, MultiplayerMessage message)
+    onMessage,
+    FutureOr<void> Function(String connectionId) onDisconnect,
   ) {
     _subscription = webSocket.stream.listen(
-      (dynamic message) {
+      (dynamic message) async {
         if (message is String) {
+          late final MultiplayerMessage parsedMessage;
           try {
-            final parsedMessage = MultiplayerMessage.decode(message);
-            onMessage(connectionId, parsedMessage);
+            parsedMessage = MultiplayerMessage.decode(message);
           } catch (e) {
             _log('message_parse_error', {'error': e.toString()});
             sendError('invalid_json', 'Invalid JSON: $e');
+            return;
+          }
+
+          try {
+            await onMessage(connectionId, parsedMessage);
+          } catch (e) {
+            _log('message_handler_error', {'error': e.toString()});
+            sendError('internal_error', 'Internal server error: $e');
           }
         }
       },
-      onDone: () {
+      onDone: () async {
         _log('websocket_done', const {});
-        onDisconnect(connectionId);
+        try {
+          await onDisconnect(connectionId);
+        } catch (e) {
+          _log('disconnect_handler_error', {'error': e.toString()});
+        }
       },
-      onError: (error) {
+      onError: (error) async {
         _log('websocket_error', {'error': error.toString()});
-        onDisconnect(connectionId);
+        try {
+          await onDisconnect(connectionId);
+        } catch (e) {
+          _log('disconnect_handler_error', {'error': e.toString()});
+        }
       },
     );
   }
@@ -73,33 +90,38 @@ class ClientConnection {
     final room = roomManager.getRoom(roomId);
     if (room != null) {
       final snapshot = room.toSnapshot();
-      send(MultiplayerMessage(
-        type: MultiplayerMessageType.roomSnapshot,
-        roomId: roomId,
-        playerId: playerId,
-        payload: snapshot.toJson(),
-      ));
+      send(
+        MultiplayerMessage(
+          type: MultiplayerMessageType.roomSnapshot,
+          roomId: roomId,
+          playerId: playerId,
+          payload: snapshot.toJson(),
+        ),
+      );
     }
   }
 
   /// Enviar error
-  void sendError(String code, String message,
-      {String? roomId, String? playerId}) {
+  void sendError(
+    String code,
+    String message, {
+    String? roomId,
+    String? playerId,
+  }) {
     _log('error_sent', {
       'code': code,
       'message': message,
       'roomId': roomId ?? _currentRoomId,
       'playerId': playerId ?? _playerId,
     });
-    send(MultiplayerMessage(
-      type: MultiplayerMessageType.error,
-      roomId: roomId,
-      playerId: playerId,
-      payload: {
-        'code': code,
-        'message': message,
-      },
-    ));
+    send(
+      MultiplayerMessage(
+        type: MultiplayerMessageType.error,
+        roomId: roomId,
+        playerId: playerId,
+        payload: {'code': code, 'message': message},
+      ),
+    );
   }
 
   /// Actualizar la sala y jugador actual
@@ -115,13 +137,8 @@ class ClientConnection {
   }
 
   void _log(String event, Map<String, Object?> fields) {
-    print('[zapiti] ${jsonEncode({
-          'ts': DateTime.now().toIso8601String(),
-          'event': event,
-          'connectionId': connectionId,
-          'currentRoomId': _currentRoomId,
-          'playerId': _playerId,
-          ...fields,
-        })}');
+    print(
+      '[zapiti] ${jsonEncode({'ts': DateTime.now().toIso8601String(), 'event': event, 'connectionId': connectionId, 'currentRoomId': _currentRoomId, 'playerId': _playerId, ...fields})}',
+    );
   }
 }

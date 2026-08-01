@@ -36,10 +36,7 @@ void main() {
     test('handle error message type', () {
       final message = MultiplayerMessage(
         type: MultiplayerMessageType.error,
-        payload: {
-          'code': 'room_not_found',
-          'message': 'Room does not exist',
-        },
+        payload: {'code': 'room_not_found', 'message': 'Room does not exist'},
       );
 
       final json = message.toJson();
@@ -49,10 +46,7 @@ void main() {
 
     test('throw on unknown message type', () {
       final json = {'type': 'unknown_type'};
-      expect(
-        () => MultiplayerMessage.fromJson(json),
-        throwsFormatException,
-      );
+      expect(() => MultiplayerMessage.fromJson(json), throwsFormatException);
     });
 
     test('throw on invalid JSON', () {
@@ -241,11 +235,7 @@ void main() {
       final update = MultiplayerMessage(
         type: MultiplayerMessageType.updateProfile,
         playerId: 'player_1',
-        payload: {
-          'username': 'juan',
-          'name': 'Juan',
-          'password': 'secreto123',
-        },
+        payload: {'username': 'juan', 'name': 'Juan', 'password': 'secreto123'},
       );
       final profile = MultiplayerMessage(
         type: MultiplayerMessageType.profile,

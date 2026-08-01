@@ -28,10 +28,7 @@ class SpanishCard {
   final int value;
   final Suit suit;
 
-  const SpanishCard({
-    required this.value,
-    required this.suit,
-  });
+  const SpanishCard({required this.value, required this.suit});
 
   String get rankLabel {
     switch (value) {
@@ -59,10 +56,7 @@ class SpanishCard {
   @override
   int get hashCode => Object.hash(value, suit);
 
-  Map<String, dynamic> toJson() => {
-        'value': value,
-        'suit': suit.label,
-      };
+  Map<String, dynamic> toJson() => {'value': value, 'suit': suit.label};
 
   factory SpanishCard.fromJson(Map<String, dynamic> json) {
     return SpanishCard(
@@ -140,21 +134,17 @@ class MatchPlayer {
   bool get isBot => connectionId == null;
 
   Map<String, dynamic> toJson() => {
-        'playerId': playerId,
-        'name': name,
-        'teamId': teamId,
-        if (pairId != null) 'pairId': pairId,
-        if (teamName != null) 'teamName': teamName,
-        'characterId': characterId,
-        if (isBot) 'aiDifficulty': aiDifficulty,
-      };
+    'playerId': playerId,
+    'name': name,
+    'teamId': teamId,
+    if (pairId != null) 'pairId': pairId,
+    if (teamName != null) 'teamName': teamName,
+    'characterId': characterId,
+    if (isBot) 'aiDifficulty': aiDifficulty,
+  };
 }
 
-enum BotTrucoAction {
-  accept,
-  pass,
-  raise,
-}
+enum BotTrucoAction { accept, pass, raise }
 
 class BotTrucoDecision {
   final BotTrucoAction action;
@@ -172,20 +162,14 @@ class PlayedCard {
   final MatchPlayer player;
   final SpanishCard card;
 
-  const PlayedCard({
-    required this.player,
-    required this.card,
-  });
+  const PlayedCard({required this.player, required this.card});
 }
 
 class RoundResult {
   final PlayedCard? winner;
   final List<PlayedCard> playedCards;
 
-  const RoundResult({
-    required this.winner,
-    required this.playedCards,
-  });
+  const RoundResult({required this.winner, required this.playedCards});
 
   bool get isTie => winner == null;
   int? get winningTeamId => winner?.player.teamId;
@@ -227,8 +211,9 @@ class RoundRules {
       for (final playedCard in strongestCards) playedCard.player.teamId,
     };
 
-    final PlayedCard? winner =
-        strongestTeams.length == 1 ? strongestCards.first : null;
+    final PlayedCard? winner = strongestTeams.length == 1
+        ? strongestCards.first
+        : null;
     return RoundResult(
       winner: winner,
       playedCards: List.unmodifiable(playedCards),
@@ -314,8 +299,9 @@ class TrucoRules {
   }) {
     final maxForTeamOne = targetScore - 1 - scoreTeamOne;
     final maxForTeamTwo = targetScore - 1 - scoreTeamTwo;
-    final maxValue =
-        maxForTeamOne < maxForTeamTwo ? maxForTeamOne : maxForTeamTwo;
+    final maxValue = maxForTeamOne < maxForTeamTwo
+        ? maxForTeamOne
+        : maxForTeamTwo;
     final minimumValue = currentAcceptedValue < firstTrucoValue
         ? firstTrucoValue
         : currentAcceptedValue;
@@ -336,12 +322,7 @@ class TrucoRules {
   }
 }
 
-enum AlVerState {
-  none,
-  awaitingDecision,
-  playing,
-  conceded,
-}
+enum AlVerState { none, awaitingDecision, playing, conceded }
 
 class PassedHandState {
   final String originalLeaderId;
@@ -362,9 +343,9 @@ class PassedHandState {
   }
 
   Map<String, dynamic> toJson() => {
-        'originalLeaderId': originalLeaderId,
-        if (passedToPlayerId != null) 'passedToPlayerId': passedToPlayerId,
-      };
+    'originalLeaderId': originalLeaderId,
+    if (passedToPlayerId != null) 'passedToPlayerId': passedToPlayerId,
+  };
 }
 
 class MatchState {
@@ -482,10 +463,7 @@ class MatchState {
     return callerTeamId == 1 ? 2 : 1;
   }
 
-  bool canPassHand({
-    required String fromPlayerId,
-    required String toPlayerId,
-  }) {
+  bool canPassHand({required String fromPlayerId, required String toPlayerId}) {
     if (!allowPassHand) return false;
     if (handFinished || isRoundAwaitingContinue || isGameFinished) return false;
     if (pendingTrucoValue != null) return false;
@@ -504,10 +482,7 @@ class MatchState {
     return true;
   }
 
-  void passHand({
-    required String fromPlayerId,
-    required String toPlayerId,
-  }) {
+  void passHand({required String fromPlayerId, required String toPlayerId}) {
     if (!canPassHand(fromPlayerId: fromPlayerId, toPlayerId: toPlayerId)) {
       throw StateError('Cannot pass hand in current state.');
     }
@@ -654,14 +629,16 @@ class MatchState {
 
     handSequence += 1;
     if (fixedHands == null) {
-      handSeed = DateTime.now().microsecondsSinceEpoch ^
+      handSeed =
+          DateTime.now().microsecondsSinceEpoch ^
           Random().nextInt(1 << 32) ^
           handSequence;
     }
     hands
       ..clear()
       ..addAll(
-          fixedHands == null ? _dealRandomHands() : _cloneHands(fixedHands));
+        fixedHands == null ? _dealRandomHands() : _cloneHands(fixedHands),
+      );
     playedCards.clear();
     roundHistory.clear();
     roundWins
@@ -773,8 +750,9 @@ class MatchState {
     if (hand == null || hand.isEmpty) {
       throw StateError('Current player has no cards.');
     }
-    final card =
-        player.isBot ? chooseBotCard(player) : _chooseTimeoutCard(player);
+    final card = player.isBot
+        ? chooseBotCard(player)
+        : _chooseTimeoutCard(player);
     playCard(player.playerId, card);
     if (isAwaitingCardPlay) {
       refreshTurnDeadline(now: currentTime);
@@ -905,55 +883,52 @@ class MatchState {
 
     final rivalTeamId = teamId == 1 ? 2 : 1;
     alVerState = AlVerState.conceded;
-    _finishHandForTeam(
-      rivalTeamId,
-      points: 2,
-    );
+    _finishHandForTeam(rivalTeamId, points: 2);
   }
 
   Map<String, dynamic> toPublicJson() => {
-        'roomId': roomId,
-        'phase': phase,
-        'createdAt': createdAt,
-        'seed': seed,
-        'handSequence': handSequence,
-        'players': [for (final player in players) player.toJson()],
-        'currentPlayerId': currentPlayerId,
-        'leadPlayerId': players[leadIndex].playerId,
-        'nextLeadPlayerId': players[nextLeadIndex].playerId,
-        'allowPassHand': allowPassHand,
-        'passedHandState': passedHandState.toJson(),
-        'handValue': handValue,
-        'pendingTrucoValue': pendingTrucoValue,
-        'trucoCallerTeamId': trucoCallerTeamId,
-        'isTrucoAccepted': isTrucoAccepted,
-        'score': {'1': score[1], '2': score[2]},
-        'roundWins': {'1': roundWins[1], '2': roundWins[2]},
-        'turnIndex': turnIndex,
-        'leadIndex': leadIndex,
-        'nextLeadIndex': nextLeadIndex,
-        'playedCards': [
-          for (final playedCard in playedCards)
-            {
-              'playerId': playedCard.player.playerId,
-              'card': playedCard.card.toJson(),
-            }
-        ],
-        'hands': {
-          for (final entry in hands.entries)
-            entry.key: [for (final card in entry.value) card.toJson()],
+    'roomId': roomId,
+    'phase': phase,
+    'createdAt': createdAt,
+    'seed': seed,
+    'handSequence': handSequence,
+    'players': [for (final player in players) player.toJson()],
+    'currentPlayerId': currentPlayerId,
+    'leadPlayerId': players[leadIndex].playerId,
+    'nextLeadPlayerId': players[nextLeadIndex].playerId,
+    'allowPassHand': allowPassHand,
+    'passedHandState': passedHandState.toJson(),
+    'handValue': handValue,
+    'pendingTrucoValue': pendingTrucoValue,
+    'trucoCallerTeamId': trucoCallerTeamId,
+    'isTrucoAccepted': isTrucoAccepted,
+    'score': {'1': score[1], '2': score[2]},
+    'roundWins': {'1': roundWins[1], '2': roundWins[2]},
+    'turnIndex': turnIndex,
+    'leadIndex': leadIndex,
+    'nextLeadIndex': nextLeadIndex,
+    'playedCards': [
+      for (final playedCard in playedCards)
+        {
+          'playerId': playedCard.player.playerId,
+          'card': playedCard.card.toJson(),
         },
-        'handFinished': handFinished,
-        'isRoundAwaitingContinue': isRoundAwaitingContinue,
-        'winningTeamId': winningTeamId,
-        'turnTimeoutSeconds': turnTimeoutSeconds,
-        'turnDeadlineAt': turnDeadlineAt,
-        'turnSecondsRemaining': turnSecondsRemaining(),
-        'alVerState': alVerState.name,
-        'alVerTeamId': alVerTeamId,
-        'alVerTeamIds': alVerTeamIds.toList(),
-        'status': status,
-      };
+    ],
+    'hands': {
+      for (final entry in hands.entries)
+        entry.key: [for (final card in entry.value) card.toJson()],
+    },
+    'handFinished': handFinished,
+    'isRoundAwaitingContinue': isRoundAwaitingContinue,
+    'winningTeamId': winningTeamId,
+    'turnTimeoutSeconds': turnTimeoutSeconds,
+    'turnDeadlineAt': turnDeadlineAt,
+    'turnSecondsRemaining': turnSecondsRemaining(),
+    'alVerState': alVerState.name,
+    'alVerTeamId': alVerTeamId,
+    'alVerTeamIds': alVerTeamIds.toList(),
+    'status': status,
+  };
 
   bool _teamHasOnlyBots(int teamId) {
     final teamPlayers = players.where((player) => player.teamId == teamId);
@@ -970,8 +945,9 @@ class MatchState {
   void _handleWonRound(RoundResult result, HandProgress progress) {
     final winner = result.winner!;
     final winningTeam = winner.player.teamId;
-    leadIndex = players
-        .indexWhere((player) => player.playerId == winner.player.playerId);
+    leadIndex = players.indexWhere(
+      (player) => player.playerId == winner.player.playerId,
+    );
     turnIndex = leadIndex;
 
     if (progress.isFinished && progress.winningTeamId != null) {
@@ -1003,8 +979,9 @@ class MatchState {
   }
 
   void _resetPassedHandState() {
-    passedHandState =
-        PassedHandState(originalLeaderId: players[leadIndex].playerId);
+    passedHandState = PassedHandState(
+      originalLeaderId: players[leadIndex].playerId,
+    );
   }
 
   void _finishHandForTeam(int teamId, {int? points}) {
@@ -1047,34 +1024,40 @@ class MatchState {
   }
 
   int _teamHandScore(int teamId) {
-    final strengths = players
-        .where((player) => player.teamId == teamId)
-        .expand((player) => hands[player.playerId] ?? const <SpanishCard>[])
-        .map(ZapitiRules.strength)
-        .toList()
-      ..sort();
+    final strengths =
+        players
+            .where((player) => player.teamId == teamId)
+            .expand((player) => hands[player.playerId] ?? const <SpanishCard>[])
+            .map(ZapitiRules.strength)
+            .toList()
+          ..sort();
     if (strengths.isEmpty) return 0;
     final strongest = strengths.last;
-    final second =
-        strengths.length > 1 ? strengths[strengths.length - 2] ~/ 2 : 0;
-    final third =
-        strengths.length > 2 ? strengths[strengths.length - 3] ~/ 3 : 0;
+    final second = strengths.length > 1
+        ? strengths[strengths.length - 2] ~/ 2
+        : 0;
+    final third = strengths.length > 2
+        ? strengths[strengths.length - 3] ~/ 3
+        : 0;
     return strongest + second + third;
   }
 
   double _normalizedHandStrength(int teamId) {
-    final strengths = players
-        .where((player) => player.teamId == teamId)
-        .expand((player) => hands[player.playerId] ?? const <SpanishCard>[])
-        .map(ZapitiRules.strength)
-        .toList()
-      ..sort();
+    final strengths =
+        players
+            .where((player) => player.teamId == teamId)
+            .expand((player) => hands[player.playerId] ?? const <SpanishCard>[])
+            .map(ZapitiRules.strength)
+            .toList()
+          ..sort();
     if (strengths.isEmpty) return 0;
     final strongest = strengths.last / 100;
-    final second =
-        strengths.length > 1 ? strengths[strengths.length - 2] / 100 : 0;
-    final third =
-        strengths.length > 2 ? strengths[strengths.length - 3] / 100 : 0;
+    final second = strengths.length > 1
+        ? strengths[strengths.length - 2] / 100
+        : 0;
+    final third = strengths.length > 2
+        ? strengths[strengths.length - 3] / 100
+        : 0;
     return (strongest * 0.55 + second * 0.30 + third * 0.15).clamp(0, 1);
   }
 
@@ -1092,12 +1075,13 @@ class MatchState {
     final profile = _BotDifficultyProfile.byLevel(responder.aiDifficulty);
     final teamId = responder.teamId;
     final teamScore = _teamHandScore(teamId);
-    final strengths = players
-        .where((player) => player.teamId == teamId)
-        .expand((player) => hands[player.playerId] ?? const <SpanishCard>[])
-        .map(ZapitiRules.strength)
-        .toList()
-      ..sort();
+    final strengths =
+        players
+            .where((player) => player.teamId == teamId)
+            .expand((player) => hands[player.playerId] ?? const <SpanishCard>[])
+            .map(ZapitiRules.strength)
+            .toList()
+          ..sort();
     if (strengths.isEmpty) return null;
 
     final strongest = strengths.last;
@@ -1170,7 +1154,8 @@ class MatchState {
   }
 
   Random _decisionRandom(String salt, MatchPlayer player) {
-    var value = seed ^
+    var value =
+        seed ^
         handSeed ^
         (handSequence * 1009) ^
         (playedCards.length * 37) ^
@@ -1208,8 +1193,9 @@ class MatchState {
     if (score[2] == 29) {
       alVerTeamIds.add(2);
     }
-    alVerState =
-        alVerTeamIds.isEmpty ? AlVerState.none : AlVerState.awaitingDecision;
+    alVerState = alVerTeamIds.isEmpty
+        ? AlVerState.none
+        : AlVerState.awaitingDecision;
   }
 
   bool _shouldBotPlayAlVer(int teamId) {
