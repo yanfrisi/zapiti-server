@@ -66,6 +66,33 @@ class RoomManager {
     return room;
   }
 
+  /// Reasociar un jugador que ya tiene asiento en una sala.
+  Room? reconnectPlayer(
+    String roomId,
+    String playerName,
+    String playerId,
+    String connectionId, {
+    String? username,
+    String? pairId,
+    String? teamName,
+    String? characterId,
+  }) {
+    final room = _rooms[roomId];
+    if (room == null) return null;
+
+    room.reconnectPlayer(
+      playerId: playerId,
+      name: playerName,
+      username: username,
+      pairId: pairId,
+      teamName: teamName,
+      connectionId: connectionId,
+      characterId: characterId,
+    );
+
+    return room;
+  }
+
   /// Abandonar una sala
   void leaveRoom(String roomId, String playerId) {
     final room = _rooms[roomId];

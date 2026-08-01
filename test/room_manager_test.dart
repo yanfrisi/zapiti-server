@@ -29,6 +29,36 @@ void main() {
       expect(room2.seats[1].seatIndex, 1);
     });
 
+    test('rejects duplicate active player ids', () {
+      final room = manager.createRoom('Juan', 'p1', 'conn1');
+
+      expect(
+        () => manager.joinRoom(room.roomId, 'Juan bis', 'p1', 'conn2'),
+        throwsStateError,
+      );
+      expect(room.seats.length, 1);
+      expect(room.getConnectionId('p1'), 'conn1');
+    });
+
+    test('reconnects existing player without duplicating the seat', () {
+      final room = manager.createRoom('Juan', 'p1', 'conn1');
+      room.setPlayerReady('p1', true);
+
+      final reconnected = manager.reconnectPlayer(
+        room.roomId,
+        'Juan Reconectado',
+        'p1',
+        'conn2',
+      );
+
+      expect(reconnected, same(room));
+      expect(room.seats.length, 1);
+      expect(room.seats[0].name, 'Juan Reconectado');
+      expect(room.seats[0].seatIndex, 0);
+      expect(room.seats[0].ready, false);
+      expect(room.getConnectionId('p1'), 'conn2');
+    });
+
     test('normalizes player names', () {
       final room = manager.createRoom(
         '  Juan   Fran con nombre largo  ',

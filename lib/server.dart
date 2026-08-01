@@ -43,6 +43,115 @@ class ZapitiServer {
     return 'conn_${DateTime.now().millisecondsSinceEpoch}_${_connectionCounter++}';
   }
 
+  void _log(String event, [Map<String, Object?> fields = const {}]) {
+    final entry = <String, Object?>{
+      'ts': DateTime.now().toIso8601String(),
+      'event': event,
+      ...fields,
+    };
+    print('[zapiti] ${jsonEncode(_redactLogValue(entry))}');
+  }
+
+  Object? _redactLogValue(Object? value, [String key = '']) {
+    final lowerKey = key.toLowerCase();
+    if (lowerKey.contains('password') ||
+        lowerKey.contains('sessiontoken') ||
+        lowerKey == 'token' ||
+        lowerKey == 'pin') {
+      return '<redacted>';
+    }
+    if (value is Map) {
+      return {
+        for (final entry in value.entries)
+          entry.key.toString(): _redactLogValue(
+            entry.value,
+            entry.key.toString(),
+          ),
+      };
+    }
+    if (value is Iterable) {
+      return [for (final entry in value) _redactLogValue(entry, key)];
+    }
+    if (value is String && value.length > 180) {
+      return '${value.substring(0, 180)}...';
+    }
+    return value;
+  }
+
+  Map<String, Object?> _messageLogFields(
+    ClientConnection connection,
+    MultiplayerMessage message,
+  ) {
+    return {
+      'connectionId': connection.connectionId,
+      'connectionRoomId': connection.currentRoomId,
+      'connectionPlayerId': connection.playerId,
+      'type': message.type.value,
+      'roomId': message.roomId,
+      'playerId': message.playerId,
+      'payload': message.payload,
+    };
+  }
+
+  Map<String, Object?> _roomLogFields(Room? room) {
+    if (room == null) return {'room': null};
+    return {
+      'room': {
+        'roomId': room.roomId,
+        'phase': room.phase,
+        'seatCount': room.seats.length,
+        'hasMatch': room.match != null,
+        'seats': [
+          for (final seat in room.seats)
+            {
+              'seatIndex': seat.seatIndex,
+              'playerId': seat.playerId,
+              'name': seat.name,
+              'username': seat.username,
+              'teamId': seat.teamId,
+              'pairId': seat.pairId,
+              'teamName': seat.teamName,
+              'characterId': seat.characterId,
+              'ready': seat.ready,
+              'connected': seat.connected,
+              'connectionId': room.getConnectionId(seat.playerId),
+              'connectionKnown':
+                  _connections.containsKey(room.getConnectionId(seat.playerId)),
+            },
+        ],
+      },
+    };
+  }
+
+  void _closeSupersededConnection(
+    String connectionId, {
+    required String replacementConnectionId,
+    required String roomId,
+    required String playerId,
+  }) {
+    final oldConnection = _connections.remove(connectionId);
+    _log('connection_superseded', {
+      'connectionId': connectionId,
+      'replacementConnectionId': replacementConnectionId,
+      'roomId': roomId,
+      'playerId': playerId,
+      'oldConnectionRoomId': oldConnection?.currentRoomId,
+      'oldConnectionPlayerId': oldConnection?.playerId,
+      'activeConnectionsAfterRemove': _connections.length,
+    });
+    try {
+      oldConnection?.close();
+    } catch (error) {
+      _log('connection_superseded_close_error', {
+        'connectionId': connectionId,
+        'replacementConnectionId': replacementConnectionId,
+        'roomId': roomId,
+        'playerId': playerId,
+        'error': error.toString(),
+      });
+    }
+  }
+
   String? _sanitizePlayerId(String? rawPlayerId) {
     if (rawPlayerId == null) return null;
     final trimmed = rawPlayerId.trim();
@@ -97,7 +206,11 @@ class ZapitiServer {
   void _handleWebSocketConnection(
       WebSocketChannel webSocket, String? protocol) {
     final connectionId = _getConnectionId();
-    print('New client connected: $connectionId');
+    _log('connection_open', {
+      'connectionId': connectionId,
+      'protocol': protocol,
+      'activeConnections': _connections.length + 1,
+    });
 
     final connection = ClientConnection(
       connectionId: connectionId,
@@ -119,6 +232,7 @@ class ZapitiServer {
     if (connection == null) return;
 
     try {
+      _log('message_in', _messageLogFields(connection, message));
       switch (message.type) {
         case MultiplayerMessageType.createRoom:
           _handleCreateRoom(connection, message);
@@ -184,7 +298,10 @@ class ZapitiServer {
           connection.sendError('unknown_message_type', 'Unknown message type');
       }
     } catch (e) {
-      print('Error handling message: $e');
+      _log('message_handler_error', {
+        ..._messageLogFields(connection, message),
+        'error': e.toString(),
+      });
       connection.sendError('internal_error', 'Internal server error: $e');
     }
   }
@@ -240,6 +357,15 @@ class ZapitiServer {
             );
       if (pairId != null && selectedTeam == null) return;
 
+      _log('room_create_attempt', {
+        'connectionId': connection.connectionId,
+        'playerId': playerId,
+        'username': username,
+        'playerName': playerName,
+        'preferredCharacterId': preferredCharacterId,
+        'pairId': pairId,
+        'selectedPairId': selectedTeam?['pairId'],
+      });
       room = roomManager.createRoom(
         playerName,
         playerId,
@@ -260,13 +386,28 @@ class ZapitiServer {
       }
       connection.setCurrentRoom(room.roomId, playerId);
 
-      print('Room created: ${room.roomId} by $playerName');
+      _log('room_created', {
+        'connectionId': connection.connectionId,
+        'playerId': playerId,
+        ..._roomLogFields(room),
+      });
 
       connection.sendRoomSnapshot(room.roomId, playerId);
     } catch (e) {
       if (room != null) {
+        _log('room_create_rollback', {
+          'connectionId': connection.connectionId,
+          'playerId': playerId,
+          'error': e.toString(),
+          ..._roomLogFields(room),
+        });
         roomManager.leaveRoom(room.roomId, playerId);
       }
+      _log('room_create_error', {
+        'connectionId': connection.connectionId,
+        'playerId': playerId,
+        'error': e.toString(),
+      });
       if (e is StateError && e.message.contains('Character already taken')) {
         connection.sendError('character_taken', 'Character already taken');
       } else if (e is StateError && e.message.contains('Invalid character')) {
@@ -312,6 +453,8 @@ class ZapitiServer {
         'player_${DateTime.now().millisecondsSinceEpoch}_${_connections.length}';
 
     Room? room;
+    var joinedNewSeat = false;
+    String? supersededConnectionId;
     try {
       if (!_syncProfileForRoom(
         connection,
@@ -334,44 +477,141 @@ class ZapitiServer {
             );
       if (pairId != null && selectedTeam == null) return;
 
-      room = roomManager.joinRoom(
-        roomId,
-        playerName,
-        requestedPlayerId,
-        connection.connectionId,
-        username: username,
-        pairId: selectedTeam?['pairId']?.toString(),
-        teamName: selectedTeam?['teamName']?.toString() ?? teamName,
-      );
+      room = roomManager.getRoom(roomId);
 
       if (room == null) {
+        _log('room_join_missing_room', {
+          'connectionId': connection.connectionId,
+          'roomId': roomId,
+          'requestedPlayerId': requestedPlayerId,
+          'username': username,
+        });
         connection.sendError('room_not_found', 'Room not found');
         return;
       }
 
-      final playerId = room.seats.last.playerId;
-      if (preferredCharacterId != null) {
-        try {
-          room.setPlayerCharacter(playerId, preferredCharacterId);
-        } catch (e) {
-          final errorText = e is StateError ? e.message : e.toString();
-          if (!errorText.contains('taken')) {
-            rethrow;
+      final playerId = requestedPlayerId;
+      final existingSeatConnection = room.getConnectionId(playerId);
+      final isReconnectingSeat = room.containsPlayer(playerId);
+      _log('room_join_attempt', {
+        'connectionId': connection.connectionId,
+        'roomId': roomId,
+        'requestedPlayerId': requestedPlayerId,
+        'username': username,
+        'playerName': playerName,
+        'preferredCharacterId': preferredCharacterId,
+        'pairId': pairId,
+        'selectedPairId': selectedTeam?['pairId'],
+        'isReconnectingSeat': isReconnectingSeat,
+        'existingSeatConnection': existingSeatConnection,
+        'existingConnectionKnown':
+            _connections.containsKey(existingSeatConnection),
+        ..._roomLogFields(room),
+      });
+      if (isReconnectingSeat) {
+        if (existingSeatConnection != null &&
+            existingSeatConnection != connection.connectionId &&
+            _connections.containsKey(existingSeatConnection)) {
+          _log('room_join_taking_over_existing_connection', {
+            'connectionId': connection.connectionId,
+            'roomId': roomId,
+            'requestedPlayerId': requestedPlayerId,
+            'existingSeatConnection': existingSeatConnection,
+            ..._roomLogFields(room),
+          });
+          supersededConnectionId = existingSeatConnection;
+        }
+
+        roomManager.reconnectPlayer(
+          roomId,
+          playerName,
+          playerId,
+          connection.connectionId,
+          username: username,
+          pairId: selectedTeam?['pairId']?.toString(),
+          teamName: selectedTeam?['teamName']?.toString() ?? teamName,
+          characterId: preferredCharacterId,
+        );
+        if (supersededConnectionId != null) {
+          _closeSupersededConnection(
+            supersededConnectionId,
+            replacementConnectionId: connection.connectionId,
+            roomId: roomId,
+            playerId: playerId,
+          );
+        }
+        room = roomManager.getRoom(roomId);
+        _log('room_player_reconnected', {
+          'connectionId': connection.connectionId,
+          'roomId': roomId,
+          'playerId': playerId,
+          ..._roomLogFields(room),
+        });
+      } else {
+        room = roomManager.joinRoom(
+          roomId,
+          playerName,
+          playerId,
+          connection.connectionId,
+          username: username,
+          pairId: selectedTeam?['pairId']?.toString(),
+          teamName: selectedTeam?['teamName']?.toString() ?? teamName,
+        );
+        if (room == null) {
+          connection.sendError('room_not_found', 'Room not found');
+          return;
+        }
+        joinedNewSeat = true;
+        if (preferredCharacterId != null) {
+          try {
+            room.setPlayerCharacter(playerId, preferredCharacterId);
+          } catch (e) {
+            final errorText = e is StateError ? e.message : e.toString();
+            if (!errorText.contains('taken')) {
+              rethrow;
+            }
           }
         }
       }
       connection.setCurrentRoom(roomId, playerId);
 
-      print('Player $playerName joined room $roomId');
+      _log(isReconnectingSeat ? 'room_join_reconnected' : 'room_joined', {
+        'connectionId': connection.connectionId,
+        'roomId': roomId,
+        'playerId': playerId,
+        'playerName': playerName,
+        ..._roomLogFields(room),
+      });
 
       // Enviar snapshot a todos en la sala
       _broadcastRoomSnapshot(roomId);
     } catch (e) {
-      if (room != null) {
+      if (room != null && joinedNewSeat) {
+        _log('room_join_rollback', {
+          'connectionId': connection.connectionId,
+          'roomId': roomId,
+          'requestedPlayerId': requestedPlayerId,
+          'error': e.toString(),
+          ..._roomLogFields(room),
+        });
         roomManager.leaveRoom(roomId, requestedPlayerId);
       }
+      _log('room_join_error', {
+        'connectionId': connection.connectionId,
+        'roomId': roomId,
+        'requestedPlayerId': requestedPlayerId,
+        'joinedNewSeat': joinedNewSeat,
+        'error': e.toString(),
+        ..._roomLogFields(room),
+      });
       if (e is StateError && e.message.contains('full')) {
         connection.sendError('room_full', 'Room is full');
+      } else if (e is StateError &&
+          e.message.contains('Player already in room')) {
+        connection.sendError(
+          'player_already_in_room',
+          'Player is already connected to this room',
+        );
       } else if (e is StateError && e.message.contains('progress')) {
         connection.sendError('room_in_progress', 'Match already in progress');
       } else if (e is StateError &&
@@ -661,6 +901,14 @@ class ZapitiServer {
     );
     if (team == null) return;
     if (!_teamMatchesRoomTeammate(room, playerId, team)) {
+      _log('team_select_rejected_for_room', {
+        'connectionId': connection.connectionId,
+        'roomId': roomId,
+        'playerId': playerId,
+        'pairId': pairId,
+        'team': team,
+        ..._roomLogFields(room),
+      });
       connection.sendError(
         'invalid_team_for_room',
         'Team does not match the player position in this room',
@@ -673,6 +921,14 @@ class ZapitiServer {
       pairId: team['pairId']?.toString() ?? pairId,
       teamName: team['teamName']?.toString() ?? '',
     );
+    _log('team_selected', {
+      'connectionId': connection.connectionId,
+      'roomId': roomId,
+      'playerId': playerId,
+      'pairId': team['pairId']?.toString() ?? pairId,
+      'teamName': team['teamName']?.toString() ?? '',
+      ..._roomLogFields(room),
+    });
     _broadcastRoomSnapshot(roomId);
   }
 
@@ -812,6 +1068,12 @@ class ZapitiServer {
       return;
     }
     if (ready && _requiresTeamSelection(room, playerId)) {
+      _log('ready_rejected_team_required', {
+        'connectionId': connection.connectionId,
+        'roomId': roomId,
+        'playerId': playerId,
+        ..._roomLogFields(room),
+      });
       connection.sendError(
         'team_required',
         'Select or create a team before getting ready',
@@ -820,13 +1082,24 @@ class ZapitiServer {
     }
 
     room.setPlayerReady(playerId, ready);
-    print('Player $playerId ready: $ready');
+    _log('player_ready_changed', {
+      'connectionId': connection.connectionId,
+      'roomId': roomId,
+      'playerId': playerId,
+      'ready': ready,
+      'allReady': room.areAllReady(),
+      ..._roomLogFields(room),
+    });
 
     // Enviar snapshot
     _broadcastRoomSnapshot(roomId);
 
     // Si todos están listos y hay al menos 2 jugadores, iniciar juego
     if (room.match == null && room.areAllReady() && room.seats.length >= 2) {
+      _log('match_start_conditions_met', {
+        'roomId': roomId,
+        ..._roomLogFields(room),
+      });
       _startMatch(room);
     }
   }
@@ -864,9 +1137,10 @@ class ZapitiServer {
       return;
     }
 
-    final characterId = payload['characterId'] as String?;
-    if (characterId == null || characterId.isEmpty) {
-      connection.sendError('invalid_payload', 'Missing characterId');
+    final rawCharacterId = payload['characterId'];
+    final characterId = rawCharacterId as String?;
+    if (rawCharacterId != null && characterId != null && characterId.isEmpty) {
+      connection.sendError('invalid_payload', 'Invalid characterId');
       return;
     }
 
@@ -887,7 +1161,11 @@ class ZapitiServer {
     }
 
     try {
-      room.setPlayerCharacter(playerId, characterId);
+      if (characterId == null) {
+        room.clearPlayerCharacter(playerId);
+      } else {
+        room.setPlayerCharacter(playerId, characterId);
+      }
     } catch (e) {
       final errorText = e is StateError ? e.message : e.toString();
       if (errorText.contains('taken')) {
@@ -1112,6 +1390,10 @@ class ZapitiServer {
   }
 
   void _startMatch(Room room) {
+    _log('match_starting', {
+      'roomId': room.roomId,
+      ..._roomLogFields(room),
+    });
     room.setPhase('starting');
     final match = MatchState.start(
       roomId: room.roomId,
@@ -1120,6 +1402,12 @@ class ZapitiServer {
       players: _buildPlayersForRoom(room),
     );
     room.startMatch(match);
+    _log('match_started', {
+      'roomId': room.roomId,
+      'seed': match.seed,
+      'players': [for (final player in match.players) player.toJson()],
+      ..._roomLogFields(room),
+    });
 
     _broadcastRoomSnapshot(room.roomId);
     _broadcastStartGame(room.roomId);
@@ -1134,15 +1422,50 @@ class ZapitiServer {
   List<MatchPlayer> _buildPlayersForRoom(Room room) {
     final seats = [...room.seats]
       ..sort((a, b) => a.seatIndex.compareTo(b.seatIndex));
+    final assignedCharacterIds = <String>{};
 
     if (seats.length == 2) {
       final firstHuman = seats[0];
       final secondHuman = seats[1];
       return [
-        _humanMatchPlayer(room, firstHuman, teamId: 1),
-        _botMatchPlayer(room, 1, teamId: 2),
-        _humanMatchPlayer(room, secondHuman, teamId: 1),
-        _botMatchPlayer(room, 3, teamId: 2),
+        _humanMatchPlayer(
+          room,
+          firstHuman,
+          teamId: 1,
+          characterId: _assignMatchCharacter(
+            assignedCharacterIds,
+            preferredCharacterId: firstHuman.characterId,
+            fallbackSeatIndex: firstHuman.seatIndex,
+          ),
+        ),
+        _botMatchPlayer(
+          room,
+          1,
+          teamId: 2,
+          characterId: _assignMatchCharacter(
+            assignedCharacterIds,
+            fallbackSeatIndex: 1,
+          ),
+        ),
+        _humanMatchPlayer(
+          room,
+          secondHuman,
+          teamId: 1,
+          characterId: _assignMatchCharacter(
+            assignedCharacterIds,
+            preferredCharacterId: secondHuman.characterId,
+            fallbackSeatIndex: secondHuman.seatIndex,
+          ),
+        ),
+        _botMatchPlayer(
+          room,
+          3,
+          teamId: 2,
+          characterId: _assignMatchCharacter(
+            assignedCharacterIds,
+            fallbackSeatIndex: 3,
+          ),
+        ),
       ];
     }
 
@@ -1154,12 +1477,21 @@ class ZapitiServer {
             room,
             seatsByIndex[seatIndex]!,
             teamId: seatIndex.isEven ? 1 : 2,
+            characterId: _assignMatchCharacter(
+              assignedCharacterIds,
+              preferredCharacterId: seatsByIndex[seatIndex]!.characterId,
+              fallbackSeatIndex: seatIndex,
+            ),
           )
         else
           _botMatchPlayer(
             room,
             seatIndex,
             teamId: seatIndex.isEven ? 1 : 2,
+            characterId: _assignMatchCharacter(
+              assignedCharacterIds,
+              fallbackSeatIndex: seatIndex,
+            ),
           ),
     ];
   }
@@ -1168,6 +1500,7 @@ class ZapitiServer {
     Room room,
     MultiplayerSeat seat, {
     required int teamId,
+    required String characterId,
   }) {
     return MatchPlayer(
       playerId: seat.playerId,
@@ -1176,8 +1509,7 @@ class ZapitiServer {
       connectionId: room.getConnectionId(seat.playerId),
       pairId: seat.pairId,
       teamName: seat.teamName,
-      characterId: seat.characterId ??
-          defaultCharacterIds[seat.seatIndex % defaultCharacterIds.length],
+      characterId: characterId,
     );
   }
 
@@ -1185,14 +1517,39 @@ class ZapitiServer {
     Room room,
     int seatIndex, {
     required int teamId,
+    required String characterId,
   }) {
     return MatchPlayer(
       playerId: 'bot_${room.roomId}_$seatIndex',
       name: 'Bot ${seatIndex + 1}',
       teamId: teamId,
-      characterId: defaultCharacterIds[seatIndex % defaultCharacterIds.length],
+      characterId: characterId,
       aiDifficulty: _multiplayerBotDifficulty,
     );
+  }
+
+  String _assignMatchCharacter(
+    Set<String> assignedCharacterIds, {
+    String? preferredCharacterId,
+    required int fallbackSeatIndex,
+  }) {
+    if (preferredCharacterId != null &&
+        defaultCharacterIds.contains(preferredCharacterId) &&
+        assignedCharacterIds.add(preferredCharacterId)) {
+      return preferredCharacterId;
+    }
+
+    final fallbackCharacterId =
+        defaultCharacterIds[fallbackSeatIndex % defaultCharacterIds.length];
+    if (assignedCharacterIds.add(fallbackCharacterId)) {
+      return fallbackCharacterId;
+    }
+
+    for (final characterId in defaultCharacterIds) {
+      if (assignedCharacterIds.add(characterId)) return characterId;
+    }
+
+    return fallbackCharacterId;
   }
 
   void _handlePlayCard(
@@ -1547,19 +1904,44 @@ class ZapitiServer {
 
   /// Manejar desconexión
   void _handleDisconnect(String connectionId) {
+    final connection = _connections[connectionId];
+    _log('connection_close', {
+      'connectionId': connectionId,
+      'connectionRoomId': connection?.currentRoomId,
+      'connectionPlayerId': connection?.playerId,
+      'activeConnectionsBefore': _connections.length,
+    });
     final affectedRooms = roomManager.handleDisconnection(connectionId);
     _connections.remove(connectionId);
+    _log('connection_removed', {
+      'connectionId': connectionId,
+      'affectedRooms': affectedRooms,
+      'activeConnectionsAfter': _connections.length,
+    });
 
     for (final roomId in affectedRooms) {
       final room = roomManager.getRoom(roomId);
       if (room != null) {
+        _log('room_after_disconnect_before_reset', {
+          'roomId': roomId,
+          ..._roomLogFields(room),
+        });
         room.clearMatch();
         room.setPhase('lobby');
         // Resetear estado listo para todos los jugadores que quedan
         for (final seat in room.seats) {
           room.setPlayerReady(seat.playerId, false);
         }
+        _log('room_after_disconnect_reset', {
+          'roomId': roomId,
+          ..._roomLogFields(room),
+        });
         _broadcastRoomSnapshot(roomId);
+      } else {
+        _log('room_removed_after_disconnect', {
+          'roomId': roomId,
+          'connectionId': connectionId,
+        });
       }
     }
   }

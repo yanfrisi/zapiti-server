@@ -253,6 +253,79 @@ void main() {
     );
   });
 
+  test('same player can take over an existing room seat on reconnect',
+      () async {
+    final tempDir = Directory.systemTemp.createTempSync('zapiti_flow_test');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+
+    final rankingStore = RankingStore(path: '${tempDir.path}/ranking.sqlite');
+    final server = ZapitiServer(
+      customHost: '127.0.0.1',
+      customPort: 0,
+      customRankingStore: rankingStore,
+    );
+    await server.start();
+    addTearDown(server.stop);
+
+    final firstClient = await _TestClient.connect(server.port);
+    final replacementClient = await _TestClient.connect(server.port);
+    addTearDown(firstClient.close);
+    addTearDown(replacementClient.close);
+
+    firstClient.send(MultiplayerMessage(
+      type: MultiplayerMessageType.updateProfile,
+      playerId: 'reconnect0',
+      payload: {
+        'username': 'reconnect0',
+        'name': 'Reconnect 0',
+        'password': 'secret0',
+        'teamName': '',
+      },
+    ));
+    final profile = await firstClient.expectType(
+      MultiplayerMessageType.profile,
+    );
+
+    firstClient.send(MultiplayerMessage(
+      type: MultiplayerMessageType.createRoom,
+      playerId: 'reconnect0',
+      payload: {
+        'username': 'reconnect0',
+        'name': 'Reconnect 0',
+        'sessionToken': profile['sessionToken'],
+        'characterId': 'p1',
+      },
+    ));
+    final createdRoom = await firstClient.expectType(
+      MultiplayerMessageType.roomSnapshot,
+    );
+    final roomId = createdRoom['roomId'] as String;
+
+    replacementClient.send(MultiplayerMessage(
+      type: MultiplayerMessageType.joinRoom,
+      roomId: roomId,
+      playerId: 'reconnect0',
+      payload: {
+        'username': 'reconnect0',
+        'name': 'Reconnect 0',
+        'sessionToken': profile['sessionToken'],
+        'characterId': 'p1',
+      },
+    ));
+    final reconnectedRoom = await replacementClient.expectType(
+      MultiplayerMessageType.roomSnapshot,
+    );
+    expect(reconnectedRoom['roomId'], roomId);
+    expect(reconnectedRoom['seats'], hasLength(1));
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    final room = server.roomManager.getRoom(roomId);
+    expect(room, isNotNull);
+    expect(room!.seats, hasLength(1));
+    expect(room.seats.single.playerId, 'reconnect0');
+    expect(room.getConnectionId('reconnect0'), isNotNull);
+  });
+
   test('four simulated human players can play a multiplayer match', () async {
     final setup = await _createFourPlayerStartedMatch();
     addTearDown(setup.close);

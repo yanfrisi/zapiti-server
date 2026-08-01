@@ -86,6 +86,59 @@ class Room {
     return seat;
   }
 
+  /// Reasociar un asiento existente a una nueva conexion.
+  ///
+  /// Se usa para recuperar sockets que quedaron colgados sin duplicar asiento.
+  MultiplayerSeat reconnectPlayer({
+    required String playerId,
+    required String name,
+    String? username,
+    String? pairId,
+    String? teamName,
+    required String connectionId,
+    String? characterId,
+  }) {
+    final index = _seats.indexWhere((s) => s.playerId == playerId);
+    if (index < 0) {
+      throw StateError('Player not found in room');
+    }
+
+    if (characterId != null && !defaultCharacterIds.contains(characterId)) {
+      throw StateError('Invalid character');
+    }
+
+    if (characterId != null) {
+      final takenByOther = _seats.any(
+        (seat) => seat.playerId != playerId && seat.characterId == characterId,
+      );
+      if (takenByOther) {
+        throw StateError('Character already taken');
+      }
+    }
+
+    final cleanName = sanitizePlayerName(name);
+    if (cleanName == null) {
+      throw StateError('Invalid player name');
+    }
+
+    final seat = _seats[index];
+    final reconnectedSeat = seat.copyWith(
+      name: cleanName,
+      username: username ?? seat.username,
+      pairId: pairId ?? seat.pairId,
+      teamName: teamName ?? seat.teamName,
+      ready: false,
+      connected: true,
+      characterId: characterId ?? seat.characterId,
+    );
+
+    _seats[index] = reconnectedSeat;
+    _playerToConnection[playerId] = connectionId;
+    _seats.sort((a, b) => a.seatIndex.compareTo(b.seatIndex));
+
+    return reconnectedSeat;
+  }
+
   /// Eliminar un jugador de la sala
   void removePlayer(String playerId) {
     _seats.removeWhere((s) => s.playerId == playerId);
@@ -121,6 +174,27 @@ class Room {
     }
 
     _seats[index] = _seats[index].copyWith(characterId: characterId);
+  }
+
+  void clearPlayerCharacter(String playerId) {
+    final index = _seats.indexWhere((seat) => seat.playerId == playerId);
+    if (index < 0) {
+      throw StateError('Player not found in room');
+    }
+
+    final seat = _seats[index];
+    _seats[index] = MultiplayerSeat(
+      playerId: seat.playerId,
+      name: seat.name,
+      username: seat.username,
+      pairId: seat.pairId,
+      teamName: seat.teamName,
+      seatIndex: seat.seatIndex,
+      teamId: seat.teamId,
+      ready: seat.ready,
+      connected: seat.connected,
+      characterId: null,
+    );
   }
 
   void setPlayerTeam(

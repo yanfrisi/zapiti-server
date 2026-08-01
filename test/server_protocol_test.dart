@@ -163,6 +163,20 @@ void main() {
       expect(decoded.payload!['characterId'], 'p3');
     });
 
+    test('encode and decode released character selection', () {
+      final message = MultiplayerMessage(
+        type: MultiplayerMessageType.selectCharacter,
+        roomId: 'A7K2',
+        playerId: 'p1',
+        payload: {'characterId': null},
+      );
+
+      final decoded = MultiplayerMessage.decode(message.encode());
+      expect(decoded.type, MultiplayerMessageType.selectCharacter);
+      expect(decoded.payload!.containsKey('characterId'), isTrue);
+      expect(decoded.payload!['characterId'], isNull);
+    });
+
     test('encode and decode request_signal message', () {
       final message = MultiplayerMessage(
         type: MultiplayerMessageType.requestSignal,

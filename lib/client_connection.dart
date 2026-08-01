@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'server_protocol.dart';
 import 'room_manager.dart';
@@ -8,7 +9,7 @@ class ClientConnection {
   final String connectionId;
   final WebSocketChannel webSocket;
   final RoomManager roomManager;
-  
+
   String? _currentRoomId;
   String? _playerId;
   late StreamSubscription<dynamic> _subscription;
@@ -37,17 +38,17 @@ class ClientConnection {
             final parsedMessage = MultiplayerMessage.decode(message);
             onMessage(connectionId, parsedMessage);
           } catch (e) {
-            print('Error parsing message: $e');
+            _log('message_parse_error', {'error': e.toString()});
             sendError('invalid_json', 'Invalid JSON: $e');
           }
         }
       },
       onDone: () {
-        print('Client disconnected: $connectionId');
+        _log('websocket_done', const {});
         onDisconnect(connectionId);
       },
       onError: (error) {
-        print('WebSocket error: $error');
+        _log('websocket_error', {'error': error.toString()});
         onDisconnect(connectionId);
       },
     );
@@ -58,7 +59,12 @@ class ClientConnection {
     try {
       webSocket.sink.add(message.encode());
     } catch (e) {
-      print('Error sending message: $e');
+      _log('message_send_error', {
+        'type': message.type.value,
+        'roomId': message.roomId,
+        'playerId': message.playerId,
+        'error': e.toString(),
+      });
     }
   }
 
@@ -77,7 +83,14 @@ class ClientConnection {
   }
 
   /// Enviar error
-  void sendError(String code, String message, {String? roomId, String? playerId}) {
+  void sendError(String code, String message,
+      {String? roomId, String? playerId}) {
+    _log('error_sent', {
+      'code': code,
+      'message': message,
+      'roomId': roomId ?? _currentRoomId,
+      'playerId': playerId ?? _playerId,
+    });
     send(MultiplayerMessage(
       type: MultiplayerMessageType.error,
       roomId: roomId,
@@ -99,5 +112,16 @@ class ClientConnection {
   void close() {
     _subscription.cancel();
     webSocket.sink.close();
+  }
+
+  void _log(String event, Map<String, Object?> fields) {
+    print('[zapiti] ${jsonEncode({
+          'ts': DateTime.now().toIso8601String(),
+          'event': event,
+          'connectionId': connectionId,
+          'currentRoomId': _currentRoomId,
+          'playerId': _playerId,
+          ...fields,
+        })}');
   }
 }
