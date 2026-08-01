@@ -345,6 +345,7 @@ enum AlVerState {
 
 class MatchState {
   static const defaultTargetScore = 30;
+  static const turnTimeoutSeconds = 30;
 
   final String roomId;
   final int createdAt;
@@ -374,6 +375,7 @@ class MatchState {
   bool isTrucoAccepted = false;
   String phase = 'playing';
   String status = '';
+  int? turnDeadlineAt;
 
   MatchState._({
     required this.roomId,
@@ -412,6 +414,7 @@ class MatchState {
     state.status = state.currentPlayerId == state.humanPlayerIds.first
         ? 'Sales tu.'
         : 'Sale ${state.currentPlayer.name}.';
+    state.refreshTurnDeadline();
     return state;
   }
 
@@ -434,6 +437,12 @@ class MatchState {
 
   bool get isBotTurn => currentPlayer.isBot;
   bool get hasPendingTruco => pendingTrucoValue != null;
+  bool get isAwaitingCardPlay =>
+      !handFinished &&
+      !isRoundAwaitingContinue &&
+      !isGameFinished &&
+      pendingTrucoValue == null &&
+      alVerState != AlVerState.awaitingDecision;
   int? get alVerTeamId =>
       alVerTeamIds.length == 1 ? alVerTeamIds.first : null;
   int get trucoResponseTeamId {
@@ -467,6 +476,7 @@ class MatchState {
 
     turnIndex = (turnIndex + 1) % players.length;
     status = 'Turno de ${currentPlayer.name}.';
+    refreshTurnDeadline();
   }
 
   void resolveRound() {
@@ -487,6 +497,9 @@ class MatchState {
     }
 
     isRoundAwaitingContinue = !handFinished && !isGameFinished;
+    if (isRoundAwaitingContinue) {
+      clearTurnDeadline();
+    }
   }
 
   void continueRound() {
@@ -494,6 +507,7 @@ class MatchState {
     playedCards.clear();
     isRoundAwaitingContinue = false;
     status = 'Turno de ${currentPlayer.name}.';
+    refreshTurnDeadline();
   }
 
   void callTruco(String playerId, {required int value}) {
@@ -511,6 +525,7 @@ class MatchState {
     trucoCallerTeamId = player.teamId;
     lastTrucoRaiserTeamId = player.teamId;
     isTrucoAccepted = false;
+    clearTurnDeadline();
     status =
         '${player.name} sube el reparto a $value. El otro equipo debe responder.';
   }
@@ -528,6 +543,7 @@ class MatchState {
     trucoCallerTeamId = null;
     isTrucoAccepted = true;
     status = 'Equipo $teamId acepta. El reparto vale $handValue.';
+    refreshTurnDeadline();
   }
 
   void raiseTruco(String playerId, {required int value}) {
@@ -601,6 +617,9 @@ class MatchState {
         : 'Sale ${currentPlayer.name}.';
     if (alVerState == AlVerState.awaitingDecision) {
       status = '$status Equipo al ver pendiente.';
+      clearTurnDeadline();
+    } else {
+      refreshTurnDeadline();
     }
   }
 
@@ -649,6 +668,50 @@ class MatchState {
   }
 
   bool teamHasOnlyBots(int teamId) => _teamHasOnlyBots(teamId);
+
+  void refreshTurnDeadline({int? now}) {
+    if (!isAwaitingCardPlay) {
+      clearTurnDeadline();
+      return;
+    }
+    final currentTime = now ?? DateTime.now().millisecondsSinceEpoch;
+    turnDeadlineAt = currentTime + turnTimeoutSeconds * 1000;
+  }
+
+  void clearTurnDeadline() {
+    turnDeadlineAt = null;
+  }
+
+  int? turnSecondsRemaining({int? now}) {
+    final deadline = turnDeadlineAt;
+    if (deadline == null) return null;
+    final currentTime = now ?? DateTime.now().millisecondsSinceEpoch;
+    final remainingMillis = deadline - currentTime;
+    if (remainingMillis <= 0) return 0;
+    return (remainingMillis / 1000).ceil();
+  }
+
+  PlayedCard playTimeoutCard({int? now}) {
+    if (!isAwaitingCardPlay) {
+      throw StateError('No card turn pending.');
+    }
+    final deadline = turnDeadlineAt;
+    final currentTime = now ?? DateTime.now().millisecondsSinceEpoch;
+    if (deadline != null && currentTime < deadline) {
+      throw StateError('Turn timeout has not expired.');
+    }
+    final player = currentPlayer;
+    final hand = hands[player.playerId];
+    if (hand == null || hand.isEmpty) {
+      throw StateError('Current player has no cards.');
+    }
+    final card = player.isBot ? chooseBotCard(player) : _chooseTimeoutCard(player);
+    playCard(player.playerId, card);
+    if (isAwaitingCardPlay) {
+      refreshTurnDeadline(now: currentTime);
+    }
+    return PlayedCard(player: player, card: card);
+  }
 
   MatchPlayer botResponderForTeam(int teamId) {
     return players.firstWhere(
@@ -767,6 +830,7 @@ class MatchState {
     if (play) {
       alVerState = AlVerState.playing;
       status = 'Equipo $teamId decide jugar al ver. La mano continua.';
+      refreshTurnDeadline();
       return;
     }
 
@@ -811,6 +875,9 @@ class MatchState {
         'handFinished': handFinished,
         'isRoundAwaitingContinue': isRoundAwaitingContinue,
         'winningTeamId': winningTeamId,
+        'turnTimeoutSeconds': turnTimeoutSeconds,
+        'turnDeadlineAt': turnDeadlineAt,
+        'turnSecondsRemaining': turnSecondsRemaining(),
         'alVerState': alVerState.name,
         'alVerTeamId': alVerTeamId,
         'alVerTeamIds': alVerTeamIds.toList(),
@@ -868,6 +935,7 @@ class MatchState {
     handFinished = true;
     isRoundAwaitingContinue = false;
     pendingTrucoValue = null;
+    clearTurnDeadline();
     trucoCallerTeamId = null;
     if (score[teamId]! >= targetScore) {
       winningTeamId = teamId;
@@ -881,6 +949,7 @@ class MatchState {
   void _finishHandWithoutPoints() {
     handFinished = true;
     isRoundAwaitingContinue = false;
+    clearTurnDeadline();
     pendingTrucoValue = null;
     trucoCallerTeamId = null;
     status = 'Mano sin puntos.';
@@ -888,6 +957,15 @@ class MatchState {
 
   int _compareByStrength(SpanishCard a, SpanishCard b) {
     return ZapitiRules.strength(a).compareTo(ZapitiRules.strength(b));
+  }
+
+  SpanishCard _chooseTimeoutCard(MatchPlayer player) {
+    final hand = hands[player.playerId];
+    if (hand == null || hand.isEmpty) {
+      throw StateError('Player has no cards.');
+    }
+    final sorted = [...hand]..sort(_compareByStrength);
+    return sorted.first;
   }
 
   int _teamHandScore(int teamId) {

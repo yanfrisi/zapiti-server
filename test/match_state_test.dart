@@ -76,6 +76,22 @@ void main() {
       expect(decision.player.teamId, 2);
     });
   });
+
+  group('MatchState turn timeout', () {
+    test('juega automaticamente la carta mas baja al vencer el turno', () {
+      final match = _makeMatch();
+      match.startNewHand(fixedHands: _fixedHands());
+      match.turnDeadlineAt = 1000;
+
+      final playedCard = match.playTimeoutCard(now: 1001);
+
+      expect(playedCard.player.playerId, 'p1');
+      expect(playedCard.card, SpanishCard(value: 5, suit: Suit.copas));
+      expect(match.playedCards.length, 1);
+      expect(match.currentPlayerId, 'p2');
+      expect(match.turnSecondsRemaining(now: 1001), 30);
+    });
+  });
 }
 
 MatchState _makeMatch() {

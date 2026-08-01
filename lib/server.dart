@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:shelf/shelf.dart' as shelf;
 import 'package:shelf/shelf_io.dart' as io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
@@ -23,6 +24,7 @@ class ZapitiServer {
   // Map de connectionId -> ClientConnection
   final Map<String, ClientConnection> _connections = {};
   final Set<String> _recordedMatchIds = {};
+  final Map<String, Timer> _turnTimeoutTimers = {};
 
   int _connectionCounter = 0;
 
@@ -1889,6 +1891,67 @@ class ZapitiServer {
         break;
       }
     }
+
+    _scheduleTurnTimeout(room);
+  }
+
+  void _scheduleTurnTimeout(Room room) {
+    _turnTimeoutTimers.remove(room.roomId)?.cancel();
+    final match = room.match;
+    final deadline = match?.turnDeadlineAt;
+    if (match == null || deadline == null || !match.isAwaitingCardPlay) {
+      return;
+    }
+
+    final delayMillis = max(0, deadline - DateTime.now().millisecondsSinceEpoch);
+    _turnTimeoutTimers[room.roomId] = Timer(
+      Duration(milliseconds: delayMillis),
+      () => _handleTurnTimeout(room.roomId, deadline),
+    );
+  }
+
+  void _handleTurnTimeout(String roomId, int expectedDeadline) {
+    _turnTimeoutTimers.remove(roomId)?.cancel();
+    final room = roomManager.getRoom(roomId);
+    final match = room?.match;
+    if (room == null || match == null) return;
+    if (match.turnDeadlineAt != expectedDeadline || !match.isAwaitingCardPlay) {
+      _scheduleTurnTimeout(room);
+      return;
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now < expectedDeadline) {
+      _scheduleTurnTimeout(room);
+      return;
+    }
+
+    PlayedCard playedCard;
+    try {
+      playedCard = match.playTimeoutCard(now: now);
+    } catch (e) {
+      print('Turn timeout failed: $e');
+      _scheduleTurnTimeout(room);
+      return;
+    }
+
+    _broadcastToRoom(
+      room.roomId,
+      MultiplayerMessage(
+        type: MultiplayerMessageType.playCard,
+        roomId: room.roomId,
+        playerId: playedCard.player.playerId,
+        payload: {
+          'card': playedCard.card.toJson(),
+          'autoPlayed': true,
+          'reason': 'turn_timeout',
+        },
+      ),
+    );
+    _broadcastRoomSnapshot(room.roomId);
+    _advanceMatchIfNeeded(room);
+    _recordMatchIfFinished(room);
+    _broadcastRoomSnapshot(room.roomId);
   }
 
   void _recordMatchIfFinished(Room room) {
@@ -2077,6 +2140,10 @@ class ZapitiServer {
   }
 
   Future<void> stop({bool closeRankingStore = true}) async {
+    for (final timer in _turnTimeoutTimers.values) {
+      timer.cancel();
+    }
+    _turnTimeoutTimers.clear();
     await _httpServer?.close(force: true);
     _httpServer = null;
     if (closeRankingStore) {
