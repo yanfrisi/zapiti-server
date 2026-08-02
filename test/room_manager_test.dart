@@ -59,6 +59,26 @@ void main() {
       expect(room.getConnectionId('p1'), 'conn2');
     });
 
+    test('reselecting the same team keeps ready state', () {
+      final room = manager.createRoom('Juan', 'p1', 'conn1');
+      room.setPlayerTeam('p1', pairId: 'p1+p2', teamName: 'Equipo 1');
+      room.setPlayerReady('p1', true);
+
+      room.setPlayerTeam('p1', pairId: 'p1+p2', teamName: 'Equipo 1');
+
+      expect(room.seats.single.ready, true);
+    });
+
+    test('changing team clears ready state', () {
+      final room = manager.createRoom('Juan', 'p1', 'conn1');
+      room.setPlayerTeam('p1', pairId: 'p1+p2', teamName: 'Equipo 1');
+      room.setPlayerReady('p1', true);
+
+      room.setPlayerTeam('p1', pairId: 'p1+p3', teamName: 'Equipo 2');
+
+      expect(room.seats.single.ready, false);
+    });
+
     test('normalizes player names', () {
       final room = manager.createRoom(
         '  Juan   Fran con nombre largo  ',

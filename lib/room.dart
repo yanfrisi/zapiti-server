@@ -209,10 +209,12 @@ class Room {
       throw StateError('Player not found in room');
     }
 
-    _seats[index] = _seats[index].copyWith(
+    final seat = _seats[index];
+    final teamChanged = seat.pairId != pairId || seat.teamName != teamName;
+    _seats[index] = seat.copyWith(
       pairId: pairId,
       teamName: teamName,
-      ready: false,
+      ready: teamChanged ? false : seat.ready,
     );
   }
 
