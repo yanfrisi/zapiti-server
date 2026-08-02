@@ -20,6 +20,7 @@ class ZapitiServer {
   final RoomManager roomManager = RoomManager();
   final RankingRepository rankingStore;
   static const int _multiplayerBotDifficulty = 4;
+  static const String _defaultAppVersion = '0.1.0';
   HttpServer? _httpServer;
 
   // Map de connectionId -> ClientConnection
@@ -125,6 +126,21 @@ class ZapitiServer {
             },
         ],
       },
+    };
+  }
+
+  Map<String, Object?> _versionManifest() {
+    final latestVersion =
+        Platform.environment['APP_LATEST_VERSION'] ?? _defaultAppVersion;
+    final minimumMultiplayerVersion =
+        Platform.environment['APP_MIN_MULTIPLAYER_VERSION'] ?? latestVersion;
+    final updateMessage = Platform.environment['APP_UPDATE_MESSAGE'];
+
+    return {
+      'latestVersion': latestVersion,
+      'minimumMultiplayerVersion': minimumMultiplayerVersion,
+      if (updateMessage != null && updateMessage.trim().isNotEmpty)
+        'message': updateMessage.trim(),
     };
   }
 
@@ -2216,6 +2232,15 @@ class ZapitiServer {
           headers: const {'content-type': 'application/json; charset=utf-8'},
         );
       }
+      if (request.url.path == 'version.json') {
+        return shelf.Response.ok(
+          jsonEncode(_versionManifest()),
+          headers: const {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
+          },
+        );
+      }
       // Delegar a WebSocket handler
       return webSocketHandler(request);
     };
@@ -2225,6 +2250,7 @@ class ZapitiServer {
 
     print('Zapiti server listening on ws://$host:$port/');
     print('Health check: http://$host:$port/health');
+    print('Version manifest: http://$host:$port/version.json');
   }
 
   Future<void> stop({bool closeRankingStore = true}) async {

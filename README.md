@@ -41,6 +41,30 @@ Respuesta:
 { "status": "ok" }
 ```
 
+## Version de app
+
+Endpoint:
+
+```text
+GET /version.json
+```
+
+Respuesta:
+
+```json
+{
+  "latestVersion": "0.1.0",
+  "minimumMultiplayerVersion": "0.1.0",
+  "message": "Actualiza Zapiti para jugar online."
+}
+```
+
+Variables de entorno:
+
+- `APP_LATEST_VERSION`: ultima version publicada de la app.
+- `APP_MIN_MULTIPLAYER_VERSION`: version minima permitida para multijugador.
+- `APP_UPDATE_MESSAGE`: mensaje opcional para clientes antiguos.
+
 ## WebSocket
 
 El WebSocket vive en la raiz:
