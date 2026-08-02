@@ -1230,47 +1230,11 @@ class ZapitiServer {
   }
 
   bool _requiresTeamSelection(Room room, String playerId) {
-    final localSeat = room.seats.cast<MultiplayerSeat?>().firstWhere(
-      (seat) => seat?.playerId == playerId,
-      orElse: () => null,
-    );
-    if (localSeat == null) {
-      _log('team_required_check', {
-        'roomId': room.roomId,
-        'playerId': playerId,
-        'requiresTeam': false,
-        'reason': 'local_seat_missing',
-      });
-      return false;
-    }
-    if (room.seats.length < Room.maxSeats) {
-      _log('team_required_check', {
-        'roomId': room.roomId,
-        'playerId': playerId,
-        'requiresTeam': false,
-        'reason': 'room_not_full',
-        'seatCount': room.seats.length,
-      });
-      return false;
-    }
-    final hasHumanTeammate = room.seats.any((seat) {
-      if (seat.playerId == playerId) return false;
-      if ((seat.username ?? '').trim().isEmpty) return false;
-      return seat.teamId == localSeat.teamId;
-    });
-    final hasPair = (localSeat.pairId ?? '').trim().isNotEmpty;
-    final requiresTeam = hasHumanTeammate && !hasPair;
-    _log('team_required_check', {
+    _log('team_required_check_disabled', {
       'roomId': room.roomId,
       'playerId': playerId,
-      'requiresTeam': requiresTeam,
-      'hasHumanTeammate': hasHumanTeammate,
-      'hasPair': hasPair,
-      'pairId': localSeat.pairId,
-      'teamName': localSeat.teamName,
-      ..._roomLogFields(room),
     });
-    return requiresTeam;
+    return false;
   }
 
   void _handleSelectCharacter(
