@@ -144,6 +144,13 @@ class ZapitiServer {
     };
   }
 
+  Map<String, String> get _jsonHeaders => const {
+    'content-type': 'application/json; charset=utf-8',
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'GET, OPTIONS',
+    'access-control-allow-headers': 'content-type',
+  };
+
   void _closeSupersededConnection(
     String connectionId, {
     required String replacementConnectionId,
@@ -2226,17 +2233,22 @@ class ZapitiServer {
 
     // Combinar handlers - WebSocket tiene prioridad
     shelf.Handler handler = (shelf.Request request) {
+      if (request.method == 'OPTIONS' &&
+          (request.url.path == 'health' ||
+              request.url.path == 'version.json')) {
+        return shelf.Response.ok('', headers: _jsonHeaders);
+      }
       if (request.url.path == 'health') {
         return shelf.Response.ok(
           jsonEncode({'status': 'ok'}),
-          headers: const {'content-type': 'application/json; charset=utf-8'},
+          headers: _jsonHeaders,
         );
       }
       if (request.url.path == 'version.json') {
         return shelf.Response.ok(
           jsonEncode(_versionManifest()),
-          headers: const {
-            'content-type': 'application/json; charset=utf-8',
+          headers: {
+            ..._jsonHeaders,
             'cache-control': 'no-store',
           },
         );
