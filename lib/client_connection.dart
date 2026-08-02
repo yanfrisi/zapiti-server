@@ -13,6 +13,7 @@ class ClientConnection {
   String? _currentRoomId;
   String? _playerId;
   late StreamSubscription<dynamic> _subscription;
+  Future<void> _messageQueue = Future<void>.value();
 
   ClientConnection({
     required this.connectionId,
@@ -33,7 +34,7 @@ class ClientConnection {
     FutureOr<void> Function(String connectionId) onDisconnect,
   ) {
     _subscription = webSocket.stream.listen(
-      (dynamic message) async {
+      (dynamic message) {
         if (message is String) {
           late final MultiplayerMessage parsedMessage;
           try {
@@ -44,12 +45,14 @@ class ClientConnection {
             return;
           }
 
-          try {
-            await onMessage(connectionId, parsedMessage);
-          } catch (e) {
-            _log('message_handler_error', {'error': e.toString()});
-            sendError('internal_error', 'Internal server error: $e');
-          }
+          _messageQueue = _messageQueue.then((_) async {
+            try {
+              await onMessage(connectionId, parsedMessage);
+            } catch (e) {
+              _log('message_handler_error', {'error': e.toString()});
+              sendError('internal_error', 'Internal server error: $e');
+            }
+          });
         }
       },
       onDone: () async {
