@@ -2100,10 +2100,6 @@ class ZapitiServer {
         });
         room.clearMatch();
         room.setPhase('lobby');
-        // Resetear estado listo para todos los jugadores que quedan
-        for (final seat in room.seats) {
-          room.setPlayerReady(seat.playerId, false);
-        }
         _log('room_after_disconnect_reset', {
           'roomId': roomId,
           ..._roomLogFields(room),
