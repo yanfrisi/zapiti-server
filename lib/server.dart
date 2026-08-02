@@ -129,6 +129,19 @@ class ZapitiServer {
     };
   }
 
+  Map<String, Object?> _teamLogFields(Map<String, dynamic>? team) {
+    if (team == null) return {'team': null};
+    return {
+      'team': {
+        'pairId': team['pairId'],
+        'teamName': team['teamName'],
+        'playerIds': team['playerIds'],
+        'teammateIds': team['teammateIds'],
+        'teammateUsernames': team['teammateUsernames'],
+      },
+    };
+  }
+
   Map<String, Object?> _versionManifest() {
     final latestVersion =
         Platform.environment['APP_LATEST_VERSION'] ?? _defaultAppVersion;
@@ -821,6 +834,12 @@ class ZapitiServer {
       playerId: playerId,
       sessionToken: sessionToken,
     );
+    _log('teams_listed', {
+      'connectionId': connection.connectionId,
+      'playerId': playerId,
+      'teamCount': teams.length,
+      'teams': [for (final team in teams) _teamLogFields(team)['team']],
+    });
     connection.send(
       MultiplayerMessage(
         type: MultiplayerMessageType.teams,
@@ -848,6 +867,12 @@ class ZapitiServer {
       return;
     }
 
+    _log('team_create_attempt', {
+      'connectionId': connection.connectionId,
+      'playerId': playerId,
+      'teammateUsername': teammateUsername,
+      'teamName': teamName,
+    });
     final team = await rankingStore.createTeamForPlayer(
       playerId: playerId,
       sessionToken: sessionToken,
@@ -855,9 +880,20 @@ class ZapitiServer {
       teamName: teamName,
     );
     if (team == null) {
+      _log('team_create_failed', {
+        'connectionId': connection.connectionId,
+        'playerId': playerId,
+        'teammateUsername': teammateUsername,
+        'teamName': teamName,
+      });
       connection.sendError('team_not_found', 'Could not create team');
       return;
     }
+    _log('team_created', {
+      'connectionId': connection.connectionId,
+      'playerId': playerId,
+      ..._teamLogFields(team),
+    });
     await _sendTeamsForPlayer(connection, playerId, sessionToken);
   }
 
@@ -953,6 +989,13 @@ class ZapitiServer {
       return;
     }
 
+    _log('team_select_attempt', {
+      'connectionId': connection.connectionId,
+      'roomId': roomId,
+      'playerId': playerId,
+      'pairId': pairId,
+      ..._roomLogFields(room),
+    });
     final team = await _authenticatedTeamForPlayer(
       connection,
       playerId: playerId,
@@ -960,6 +1003,13 @@ class ZapitiServer {
       pairId: pairId,
     );
     if (team == null) return;
+    _log('team_select_authenticated', {
+      'connectionId': connection.connectionId,
+      'roomId': roomId,
+      'playerId': playerId,
+      'pairId': pairId,
+      ..._teamLogFields(team),
+    });
     if (!_teamMatchesRoomTeammate(room, playerId, team)) {
       _log('team_select_rejected_for_room', {
         'connectionId': connection.connectionId,
@@ -1034,9 +1084,21 @@ class ZapitiServer {
 
     final teammateIds = team['teammateIds'];
     if (teammateIds is! List) return false;
-    return teammateIds
+    final teammateMatches = teammateIds
         .map((entry) => entry.toString())
         .contains(teammateSeat.playerId);
+    _log('team_match_room_teammate_checked', {
+      'roomId': room.roomId,
+      'playerId': playerId,
+      'localSeatIndex': localSeat.seatIndex,
+      'localTeamId': localSeat.teamId,
+      'teammatePlayerId': teammateSeat.playerId,
+      'teammateSeatIndex': teammateSeat.seatIndex,
+      'teammateTeamId': teammateSeat.teamId,
+      'teammateIds': teammateIds,
+      'matches': teammateMatches,
+    });
+    return teammateMatches;
   }
 
   Future<void> _sendTeamsForPlayer(
@@ -1172,14 +1234,43 @@ class ZapitiServer {
       (seat) => seat?.playerId == playerId,
       orElse: () => null,
     );
-    if (localSeat == null) return false;
-    if (room.seats.length < Room.maxSeats) return false;
+    if (localSeat == null) {
+      _log('team_required_check', {
+        'roomId': room.roomId,
+        'playerId': playerId,
+        'requiresTeam': false,
+        'reason': 'local_seat_missing',
+      });
+      return false;
+    }
+    if (room.seats.length < Room.maxSeats) {
+      _log('team_required_check', {
+        'roomId': room.roomId,
+        'playerId': playerId,
+        'requiresTeam': false,
+        'reason': 'room_not_full',
+        'seatCount': room.seats.length,
+      });
+      return false;
+    }
     final hasHumanTeammate = room.seats.any((seat) {
       if (seat.playerId == playerId) return false;
       if ((seat.username ?? '').trim().isEmpty) return false;
       return seat.teamId == localSeat.teamId;
     });
-    return hasHumanTeammate && (localSeat.pairId ?? '').trim().isEmpty;
+    final hasPair = (localSeat.pairId ?? '').trim().isNotEmpty;
+    final requiresTeam = hasHumanTeammate && !hasPair;
+    _log('team_required_check', {
+      'roomId': room.roomId,
+      'playerId': playerId,
+      'requiresTeam': requiresTeam,
+      'hasHumanTeammate': hasHumanTeammate,
+      'hasPair': hasPair,
+      'pairId': localSeat.pairId,
+      'teamName': localSeat.teamName,
+      ..._roomLogFields(room),
+    });
+    return requiresTeam;
   }
 
   void _handleSelectCharacter(
@@ -2243,10 +2334,7 @@ class ZapitiServer {
       if (request.url.path == 'version.json') {
         return shelf.Response.ok(
           jsonEncode(_versionManifest()),
-          headers: {
-            ..._jsonHeaders,
-            'cache-control': 'no-store',
-          },
+          headers: {..._jsonHeaders, 'cache-control': 'no-store'},
         );
       }
       // Delegar a WebSocket handler

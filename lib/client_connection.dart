@@ -45,9 +45,24 @@ class ClientConnection {
             return;
           }
 
+          _log('message_queued', {
+            'type': parsedMessage.type.value,
+            'roomId': parsedMessage.roomId,
+            'messagePlayerId': parsedMessage.playerId,
+          });
           _messageQueue = _messageQueue.then((_) async {
             try {
+              _log('message_queue_start', {
+                'type': parsedMessage.type.value,
+                'roomId': parsedMessage.roomId,
+                'messagePlayerId': parsedMessage.playerId,
+              });
               await onMessage(connectionId, parsedMessage);
+              _log('message_queue_done', {
+                'type': parsedMessage.type.value,
+                'roomId': parsedMessage.roomId,
+                'messagePlayerId': parsedMessage.playerId,
+              });
             } catch (e) {
               _log('message_handler_error', {'error': e.toString()});
               sendError('internal_error', 'Internal server error: $e');
