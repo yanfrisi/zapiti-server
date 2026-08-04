@@ -1499,11 +1499,7 @@ class ZapitiServer {
         _handleContinueRound(connection, room, match, message);
         break;
       case MultiplayerMessageType.signal:
-        _broadcastToRoom(
-          roomId,
-          message,
-          excludeConnection: connection.connectionId,
-        );
+        _handleSignal(connection, roomId, message);
         break;
       default:
         connection.sendError('unknown_message_type', 'Unknown game message');
@@ -1682,6 +1678,9 @@ class ZapitiServer {
     MatchState match,
     MultiplayerMessage message,
   ) {
+    if (!_validateExpectedStateVersion(connection, match, message)) {
+      return;
+    }
     final playerId = message.playerId;
     final payload = message.payload;
     if (payload == null) {
@@ -1721,6 +1720,9 @@ class ZapitiServer {
     MatchState match,
     MultiplayerMessage message,
   ) {
+    if (!_validateExpectedStateVersion(connection, match, message)) {
+      return;
+    }
     final playerId = message.playerId;
     final toPlayerId = message.payload?['toPlayerId']?.toString();
     if (playerId == null || toPlayerId == null) {
@@ -1753,6 +1755,9 @@ class ZapitiServer {
     MatchState match,
     MultiplayerMessage message,
   ) {
+    if (!_validateExpectedStateVersion(connection, match, message)) {
+      return;
+    }
     final playerId = message.playerId;
     final value = message.payload?['value'];
     if (value is! int) {
@@ -1784,6 +1789,9 @@ class ZapitiServer {
     MatchState match,
     MultiplayerMessage message,
   ) {
+    if (!_validateExpectedStateVersion(connection, match, message)) {
+      return;
+    }
     final playerId = message.playerId;
     final player = match.playerById(playerId!);
     try {
@@ -1810,6 +1818,9 @@ class ZapitiServer {
     MatchState match,
     MultiplayerMessage message,
   ) {
+    if (!_validateExpectedStateVersion(connection, match, message)) {
+      return;
+    }
     final playerId = message.playerId;
     final player = match.playerById(playerId!);
     try {
@@ -1836,6 +1847,9 @@ class ZapitiServer {
     MatchState match,
     MultiplayerMessage message,
   ) {
+    if (!_validateExpectedStateVersion(connection, match, message)) {
+      return;
+    }
     final playerId = message.playerId;
     final value = message.payload?['value'];
     if (value is! int) {
@@ -1867,6 +1881,9 @@ class ZapitiServer {
     MatchState match,
     MultiplayerMessage message,
   ) {
+    if (!_validateExpectedStateVersion(connection, match, message)) {
+      return;
+    }
     try {
       match.continueRound();
     } catch (e) {
@@ -1891,6 +1908,9 @@ class ZapitiServer {
     MatchState match,
     MultiplayerMessage message,
   ) {
+    if (!_validateExpectedStateVersion(connection, match, message)) {
+      return;
+    }
     final playerId = message.playerId;
     final play = message.payload?['play'];
     if (play is! bool) {
@@ -1917,6 +1937,83 @@ class ZapitiServer {
       excludeConnection: connection.connectionId,
     );
   }
+
+  bool _validateExpectedStateVersion(
+    ClientConnection connection,
+    MatchState match,
+    MultiplayerMessage message,
+  ) {
+    final rawValue = message.payload?['expectedStateVersion'];
+    if (rawValue == null) return true;
+    final expectedStateVersion = rawValue is int
+        ? rawValue
+        : int.tryParse(rawValue.toString());
+    if (expectedStateVersion == null) {
+      connection.sendError(
+        'invalid_payload',
+        'Invalid expectedStateVersion',
+      );
+      return false;
+    }
+    if (expectedStateVersion != match.stateVersion) {
+      connection.sendError(
+        'stale_state',
+        'Expected stateVersion $expectedStateVersion but server is ${match.stateVersion}',
+      );
+      return false;
+    }
+    return true;
+  }
+
+  void _handleSignal(
+    ClientConnection connection,
+    String roomId,
+    MultiplayerMessage message,
+  ) {
+    final payload = message.payload;
+    final label = payload?['label']?.toString().trim();
+    final rawActive = payload?['active'];
+    final kind = payload?['kind']?.toString();
+    final active = rawActive is bool
+        ? rawActive
+        : rawActive == null
+            ? true
+            : null;
+
+    if (label == null || label.isEmpty || label.length > 40) {
+      connection.sendError('invalid_payload', 'Invalid signal label');
+      return;
+    }
+    if (active == null) {
+      connection.sendError('invalid_payload', 'Invalid signal active flag');
+      return;
+    }
+    if (kind != null && !_allowedSignalKinds.contains(kind)) {
+      connection.sendError('invalid_payload', 'Invalid signal kind');
+      return;
+    }
+
+    _broadcastToRoom(
+      roomId,
+      MultiplayerMessage(
+        type: MultiplayerMessageType.signal,
+        roomId: message.roomId,
+        playerId: message.playerId,
+        payload: {
+          'label': label,
+          'active': active,
+          if (kind != null) 'kind': kind,
+        },
+      ),
+      excludeConnection: connection.connectionId,
+    );
+  }
+
+  static const Set<String> _allowedSignalKinds = {
+    'voy_a_ti',
+    'ven_a_mi',
+    'mata',
+  };
 
   void _advanceMatchIfNeeded(Room room, {String? excludeConnection}) {
     final match = room.match;

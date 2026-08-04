@@ -196,6 +196,25 @@ void main() {
       expect(decoded.payload!['requesterName'], 'Juan');
     });
 
+    test('encode and decode signal message', () {
+      final message = MultiplayerMessage(
+        type: MultiplayerMessageType.signal,
+        roomId: 'A7K2',
+        playerId: 'p3',
+        payload: {
+          'label': 'Ven a mi',
+          'active': true,
+          'kind': 'ven_a_mi',
+        },
+      );
+
+      final decoded = MultiplayerMessage.decode(message.encode());
+      expect(decoded.type, MultiplayerMessageType.signal);
+      expect(decoded.payload!['label'], 'Ven a mi');
+      expect(decoded.payload!['active'], isTrue);
+      expect(decoded.payload!['kind'], 'ven_a_mi');
+    });
+
     test('encode and decode ranking message', () {
       final message = MultiplayerMessage(
         type: MultiplayerMessageType.ranking,

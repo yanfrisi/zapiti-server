@@ -317,9 +317,84 @@ class TrucoRules {
     return [firstRaise];
   }
 
+  static int? nextRaiseValue({
+    required int currentAcceptedValue,
+    required int maxAllowedValue,
+  }) {
+    final options = raiseOptions(
+      pendingValue: currentAcceptedValue,
+      maxAllowedValue: maxAllowedValue,
+    );
+    return options.isEmpty ? null : options.first;
+  }
+
   static int passPoints({required int currentAcceptedValue}) {
     return currentAcceptedValue;
   }
+}
+
+enum BetLevel {
+  none(1),
+  truco(3),
+  six(6),
+  nine(9),
+  twelve(12),
+  fifteen(15),
+  ahorrisi(18);
+
+  final int value;
+
+  const BetLevel(this.value);
+
+  static BetLevel fromAcceptedValue(int value) {
+    return switch (value) {
+      <= 1 => BetLevel.none,
+      3 => BetLevel.truco,
+      6 => BetLevel.six,
+      9 => BetLevel.nine,
+      12 => BetLevel.twelve,
+      15 => BetLevel.fifteen,
+      _ => BetLevel.ahorrisi,
+    };
+  }
+
+  static BetLevel fromProposedValue(int value) {
+    return switch (value) {
+      3 => BetLevel.truco,
+      6 => BetLevel.six,
+      9 => BetLevel.nine,
+      12 => BetLevel.twelve,
+      15 => BetLevel.fifteen,
+      _ => BetLevel.ahorrisi,
+    };
+  }
+}
+
+class BetStateView {
+  final BetLevel acceptedLevel;
+  final BetLevel? proposedLevel;
+  final int? proposingTeam;
+  final int? respondingTeam;
+  final int? lastRaisingTeam;
+  final bool responsePending;
+
+  const BetStateView({
+    required this.acceptedLevel,
+    required this.proposedLevel,
+    required this.proposingTeam,
+    required this.respondingTeam,
+    required this.lastRaisingTeam,
+    required this.responsePending,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'acceptedLevel': acceptedLevel.name,
+    if (proposedLevel != null) 'proposedLevel': proposedLevel!.name,
+    if (proposingTeam != null) 'proposingTeam': proposingTeam,
+    if (respondingTeam != null) 'respondingTeam': respondingTeam,
+    if (lastRaisingTeam != null) 'lastRaisingTeam': lastRaisingTeam,
+    'responsePending': responsePending,
+  };
 }
 
 enum AlVerState { none, awaitingDecision, playing, conceded }
@@ -367,6 +442,7 @@ class MatchState {
   final Map<int, int> roundWins = {1: 0, 2: 0};
   final Set<int> alVerTeamIds = {};
 
+  int stateVersion = 0;
   int turnIndex = 0;
   int leadIndex = 0;
   int nextLeadIndex = 0;
@@ -448,6 +524,16 @@ class MatchState {
 
   bool get isBotTurn => currentPlayer.isBot;
   bool get hasPendingTruco => pendingTrucoValue != null;
+  BetStateView get betState => BetStateView(
+    acceptedLevel: BetLevel.fromAcceptedValue(handValue),
+    proposedLevel: pendingTrucoValue == null
+        ? null
+        : BetLevel.fromProposedValue(pendingTrucoValue!),
+    proposingTeam: trucoCallerTeamId,
+    respondingTeam: pendingTrucoValue == null ? null : trucoResponseTeamId,
+    lastRaisingTeam: lastTrucoRaiserTeamId,
+    responsePending: pendingTrucoValue != null,
+  );
   bool get isAwaitingCardPlay =>
       !handFinished &&
       !isRoundAwaitingContinue &&
@@ -461,6 +547,33 @@ class MatchState {
       throw StateError('No truco caller.');
     }
     return callerTeamId == 1 ? 2 : 1;
+  }
+
+  int? nextTrucoValueForPlayer(String playerId) {
+    if (handFinished || isGameFinished) return null;
+    if (alVerState == AlVerState.awaitingDecision) return null;
+    final player = playerById(playerId);
+    if (alVerState != AlVerState.none && alVerTeamIds.contains(player.teamId)) {
+      return null;
+    }
+    if (pendingTrucoValue != null) {
+      if (trucoResponseTeamId != player.teamId) return null;
+      return TrucoRules.nextRaiseValue(
+        currentAcceptedValue: pendingTrucoValue!,
+        maxAllowedValue: maxAllowedTrucoValue,
+      );
+    }
+    if (currentPlayerId != playerId) return null;
+    if (!isTrucoAccepted) {
+      return TrucoRules.firstTrucoValue <= maxAllowedTrucoValue
+          ? TrucoRules.firstTrucoValue
+          : null;
+    }
+    if (lastTrucoRaiserTeamId == player.teamId) return null;
+    return TrucoRules.nextRaiseValue(
+      currentAcceptedValue: handValue,
+      maxAllowedValue: maxAllowedTrucoValue,
+    );
   }
 
   bool canPassHand({required String fromPlayerId, required String toPlayerId}) {
@@ -492,6 +605,7 @@ class MatchState {
     passedHandState = passedHandState.passTo(to.playerId);
     status = '${from.name} pasa mano a ${to.name}. Sale ${to.name}.';
     refreshTurnDeadline();
+    stateVersion += 1;
   }
 
   void playCard(String playerId, SpanishCard card) {
@@ -512,12 +626,14 @@ class MatchState {
 
     if (playedCards.length == players.length) {
       resolveRound();
+      stateVersion += 1;
       return;
     }
 
     turnIndex = (turnIndex + 1) % players.length;
     status = 'Turno de ${currentPlayer.name}.';
     refreshTurnDeadline();
+    stateVersion += 1;
   }
 
   void resolveRound() {
@@ -550,18 +666,20 @@ class MatchState {
     _resetPassedHandState();
     status = 'Turno de ${currentPlayer.name}.';
     refreshTurnDeadline();
+    stateVersion += 1;
   }
 
   void callTruco(String playerId, {required int value}) {
     final player = playerById(playerId);
-    if (value > maxAllowedTrucoValue) {
-      throw ArgumentError('Truco value too high.');
-    }
     if (alVerState == AlVerState.awaitingDecision) {
       throw StateError('Al ver pending.');
     }
     if (alVerState != AlVerState.none && alVerTeamIds.contains(player.teamId)) {
       throw StateError('Team al ver cannot call truco.');
+    }
+    final expectedValue = nextTrucoValueForPlayer(playerId);
+    if (expectedValue == null || expectedValue != value) {
+      throw ArgumentError('Truco call not allowed.');
     }
     pendingTrucoValue = value;
     trucoCallerTeamId = player.teamId;
@@ -570,6 +688,7 @@ class MatchState {
     clearTurnDeadline();
     status =
         '${player.name} sube el reparto a $value. El otro equipo debe responder.';
+    stateVersion += 1;
   }
 
   void acceptTruco({required int teamId}) {
@@ -586,6 +705,7 @@ class MatchState {
     isTrucoAccepted = true;
     status = 'Equipo $teamId acepta. El reparto vale $handValue.';
     refreshTurnDeadline();
+    stateVersion += 1;
   }
 
   void raiseTruco(String playerId, {required int value}) {
@@ -599,9 +719,6 @@ class MatchState {
     final player = playerById(playerId);
     if (alVerState != AlVerState.none && alVerTeamIds.contains(player.teamId)) {
       throw StateError('Team al ver cannot raise truco.');
-    }
-    if (value <= pending) {
-      throw ArgumentError('Raise must be higher.');
     }
     handValue = pending;
     callTruco(playerId, value: value);
@@ -620,6 +737,7 @@ class MatchState {
     }
     final points = TrucoRules.passPoints(currentAcceptedValue: handValue);
     _finishHandForTeam(callerTeamId, points: points);
+    stateVersion += 1;
   }
 
   void startNewHand({Map<String, List<SpanishCard>>? fixedHands}) {
@@ -666,6 +784,7 @@ class MatchState {
     } else {
       refreshTurnDeadline();
     }
+    stateVersion += 1;
   }
 
   void restartGame({Map<String, List<SpanishCard>>? fixedHands}) {
@@ -878,12 +997,14 @@ class MatchState {
       alVerState = AlVerState.playing;
       status = 'Equipo $teamId decide jugar al ver. La mano continua.';
       refreshTurnDeadline();
+      stateVersion += 1;
       return;
     }
 
     final rivalTeamId = teamId == 1 ? 2 : 1;
     alVerState = AlVerState.conceded;
     _finishHandForTeam(rivalTeamId, points: 2);
+    stateVersion += 1;
   }
 
   Map<String, dynamic> toPublicJson() => {
@@ -892,6 +1013,7 @@ class MatchState {
     'createdAt': createdAt,
     'seed': seed,
     'handSequence': handSequence,
+    'stateVersion': stateVersion,
     'players': [for (final player in players) player.toJson()],
     'currentPlayerId': currentPlayerId,
     'leadPlayerId': players[leadIndex].playerId,
@@ -899,8 +1021,10 @@ class MatchState {
     'allowPassHand': allowPassHand,
     'passedHandState': passedHandState.toJson(),
     'handValue': handValue,
+    'betState': betState.toJson(),
     'pendingTrucoValue': pendingTrucoValue,
     'trucoCallerTeamId': trucoCallerTeamId,
+    'lastTrucoRaiserTeamId': lastTrucoRaiserTeamId,
     'isTrucoAccepted': isTrucoAccepted,
     'score': {'1': score[1], '2': score[2]},
     'roundWins': {'1': roundWins[1], '2': roundWins[2]},

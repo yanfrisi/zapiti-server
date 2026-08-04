@@ -2,6 +2,21 @@ import 'package:test/test.dart';
 import 'package:zapiti_server/match_state.dart';
 
 void main() {
+  group('MatchState jerarquia', () {
+    test('7 de oros va por encima de los 3', () {
+      expect(
+        ZapitiRules.strength(
+          const SpanishCard(value: 7, suit: Suit.oros),
+        ),
+        greaterThan(
+          ZapitiRules.strength(
+            const SpanishCard(value: 3, suit: Suit.bastos),
+          ),
+        ),
+      );
+    });
+  });
+
   group('MatchState al ver', () {
     test('detecta al ver al empezar con 29 chinos', () {
       final match = _makeMatch();
@@ -71,6 +86,34 @@ void main() {
 
       expect(decision.action, isNot(BotTrucoAction.pass));
       expect(decision.player.teamId, 2);
+    });
+  });
+
+  group('MatchState truco', () {
+    test('tras aceptar el mismo equipo no puede volver a subir enseguida', () {
+      final match = _makeMatch();
+
+      match.callTruco('p1', value: 3);
+      match.acceptTruco(teamId: 2);
+
+      expect(match.nextTrucoValueForPlayer('p1'), isNull);
+    });
+
+    test('tras aceptar el rival puede subir al siguiente nivel en su turno', () {
+      final match = _makeMatch();
+      match.startNewHand(fixedHands: _fixedHands());
+
+      match.callTruco('p1', value: 3);
+      match.acceptTruco(teamId: 2);
+      match.playCard('p1', match.hands['p1']!.first);
+
+      expect(match.currentPlayerId, 'p2');
+      expect(match.nextTrucoValueForPlayer('p2'), 6);
+
+      match.callTruco('p2', value: 6);
+
+      expect(match.pendingTrucoValue, 6);
+      expect(match.trucoCallerTeamId, 2);
     });
   });
 
