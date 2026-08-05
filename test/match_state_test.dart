@@ -2,6 +2,15 @@ import 'package:test/test.dart';
 import 'package:zapiti_server/match_state.dart';
 
 void main() {
+  group('MatchState rotacion de salida', () {
+    test('la primera mano deja preparado al siguiente jugador en mesa', () {
+      final match = _makeMatch();
+
+      expect(match.currentPlayerId, 'p1');
+      expect(match.toPublicJson()['leadPlayerId'], 'p1');
+      expect(match.toPublicJson()['nextLeadPlayerId'], 'p2');
+    });
+  });
   group('MatchState jerarquia', () {
     test('7 de oros va por encima de los 3', () {
       expect(
@@ -116,7 +125,6 @@ void main() {
     );
     test('rechazar truco mantiene la salida del siguiente jugador en mesa', () {
       final match = _makeMatch();
-      match.startNewHand(fixedHands: _fixedHands());
       match.startNewHand(fixedHands: _fixedHands());
       expect(match.currentPlayerId, 'p2');
 

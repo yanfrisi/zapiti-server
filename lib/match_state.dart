@@ -496,6 +496,7 @@ class MatchState {
       hands: dealtHands,
     );
     state.leadIndex = state.nextLeadIndex;
+    state.nextLeadIndex = (state.nextLeadIndex + 1) % state.players.length;
     state.turnIndex = state.leadIndex;
     state._resetPassedHandState();
     state.status = state.currentPlayerId == state.humanPlayerIds.first
