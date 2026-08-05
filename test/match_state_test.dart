@@ -5,13 +5,9 @@ void main() {
   group('MatchState jerarquia', () {
     test('7 de oros va por encima de los 3', () {
       expect(
-        ZapitiRules.strength(
-          const SpanishCard(value: 7, suit: Suit.oros),
-        ),
+        ZapitiRules.strength(const SpanishCard(value: 7, suit: Suit.oros)),
         greaterThan(
-          ZapitiRules.strength(
-            const SpanishCard(value: 3, suit: Suit.bastos),
-          ),
+          ZapitiRules.strength(const SpanishCard(value: 3, suit: Suit.bastos)),
         ),
       );
     });
@@ -99,21 +95,40 @@ void main() {
       expect(match.nextTrucoValueForPlayer('p1'), isNull);
     });
 
-    test('tras aceptar el rival puede subir al siguiente nivel en su turno', () {
+    test(
+      'tras aceptar el rival puede subir al siguiente nivel en su turno',
+      () {
+        final match = _makeMatch();
+        match.startNewHand(fixedHands: _fixedHands());
+
+        match.callTruco('p1', value: 3);
+        match.acceptTruco(teamId: 2);
+        match.playCard('p1', match.hands['p1']!.first);
+
+        expect(match.currentPlayerId, 'p2');
+        expect(match.nextTrucoValueForPlayer('p2'), 6);
+
+        match.callTruco('p2', value: 6);
+
+        expect(match.pendingTrucoValue, 6);
+        expect(match.trucoCallerTeamId, 2);
+      },
+    );
+    test('rechazar truco mantiene la salida del siguiente jugador en mesa', () {
       final match = _makeMatch();
       match.startNewHand(fixedHands: _fixedHands());
-
-      match.callTruco('p1', value: 3);
-      match.acceptTruco(teamId: 2);
-      match.playCard('p1', match.hands['p1']!.first);
-
+      match.startNewHand(fixedHands: _fixedHands());
       expect(match.currentPlayerId, 'p2');
-      expect(match.nextTrucoValueForPlayer('p2'), 6);
 
-      match.callTruco('p2', value: 6);
+      match.callTruco('p2', value: 3);
+      match.passTruco(passingTeamId: 1);
 
-      expect(match.pendingTrucoValue, 6);
-      expect(match.trucoCallerTeamId, 2);
+      expect(match.score[2], 1);
+      expect(match.handFinished, isTrue);
+
+      match.startNewHand(fixedHands: _fixedHands());
+
+      expect(match.currentPlayerId, 'p3');
     });
   });
 
@@ -128,10 +143,10 @@ void main() {
       expect(match.passedHandState.originalLeaderId, 'p1');
       expect(match.passedHandState.passedToPlayerId, 'p3');
       expect(match.toPublicJson()['allowPassHand'], isTrue);
-      expect(
-        match.toPublicJson()['passedHandState'],
-        {'originalLeaderId': 'p1', 'passedToPlayerId': 'p3'},
-      );
+      expect(match.toPublicJson()['passedHandState'], {
+        'originalLeaderId': 'p1',
+        'passedToPlayerId': 'p3',
+      });
     });
 
     test('bloquea pasar mano despues de jugar una carta', () {
